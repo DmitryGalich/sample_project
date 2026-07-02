@@ -1,0 +1,58 @@
+version: '3.8'
+
+services:
+  gateway:
+    image: envoyproxy/envoy:v1.33.0
+    container_name: gateway
+    volumes:
+      - ./gateway/envoy.yml:/etc/envoy/envoy.yaml
+    ports:
+      - "8080:8080"
+    networks:
+      - internal_network
+
+  cache:
+    image: redis:7.4.9-alpine
+    container_name: cache
+    expose:
+      - "6379"
+    restart: unless-stopped
+    networks:
+      - internal_network
+
+  database:
+    image: postgres:16-alpine
+    container_name: database
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: admin
+      POSTGRES_DB: main_db
+    expose:
+      - "5432"
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    networks:
+      - internal_network
+
+  auth:
+    image: quay.io/keycloak/keycloak:24.0
+    container_name: auth
+    environment:
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin
+    command: start-dev
+    ports:
+      - "8081:8080"
+    restart: unless-stopped
+    networks:
+      - internal_network
+
+volumes:
+  db_data:
+
+networks:
+  internal_network:
+    driver: bridge
+
+
