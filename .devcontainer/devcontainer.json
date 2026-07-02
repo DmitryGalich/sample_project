@@ -1,0 +1,20 @@
+{
+	"name": "Existing Docker Compose (Extend)",
+	"dockerComposeFile": [
+		"../docker-compose.yml",
+		"docker-compose.yml"
+	],
+
+	"service": "core",
+	"customizations": {
+		"vscode": {
+			"extensions": [
+				"ms-vscode.cmake-tools",
+				"josetr.cmake-language-support-vscode",
+				"cheshirekow.cmake-format",
+				"ms-vscode.cpptools"
+			]
+		}
+	},
+	"workspaceFolder": "/workspaces/${localWorkspaceFolderBasename}"
+}

@@ -48,6 +48,20 @@ services:
     networks:
       - internal_network
 
+  core:
+    build:
+      context: .
+      dockerfile: core/Dockerfile
+    container_name: core
+    expose:
+      - "50051"
+    depends_on:
+      - cache
+      - database
+    restart: unless-stopped
+    networks:
+      - internal_network
+
 volumes:
   db_data:
 
