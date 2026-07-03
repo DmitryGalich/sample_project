@@ -19,6 +19,7 @@
             "command": "cmake",
             "args": [
                 "-DCMAKE_BUILD_TYPE=Debug",
+                "-DCMAKE_TOOLCHAIN_FILE=build/conan_toolchain.cmake",
                 "-B${workspaceFolder}/build",
                 "${workspaceFolder}"
             ],

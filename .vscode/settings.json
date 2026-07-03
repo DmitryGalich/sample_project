@@ -1,3 +1,6 @@
 {
-    "cmake.sourceDirectory": "/workspaces/sample_project/core"
+    "cmake.sourceDirectory": "/workspaces/sample_project/core",
+    "cmake.configureSettings": {
+        "CMAKE_TOOLCHAIN_FILE": "${workspaceFolder}/build/conan_toolchain.cmake"
+    }
 }
