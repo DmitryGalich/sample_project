@@ -1,18 +1,15 @@
 cmake_minimum_required(VERSION 4.2.3)
 
-set(CMAKE_MAP_IMPORTED_CONFIG_MINSIZEREL Release)
-set(CMAKE_MAP_IMPORTED_CONFIG_RELWITHDEBINFO Release)
-set(CMAKE_MAP_IMPORTED_CONFIG_DEBUG Release)
-
-
 project(core VERSION 0.0.1 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 26)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-list(APPEND CMAKE_PREFIX_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../build")
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(PROTOBUF REQUIRED protobuf)
+pkg_check_modules(GRPC REQUIRED grpc++)
 
-find_package(protobuf REQUIRED)
-find_package(gRPC REQUIRED)
+find_program(PROTOC_PATH protoc REQUIRED)
+find_program(GRPC_CPP_PLUGIN_PATH grpc_cpp_plugin REQUIRED)
 
 add_subdirectory(apps)

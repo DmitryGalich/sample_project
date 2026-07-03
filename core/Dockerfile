@@ -1,33 +1,24 @@
 FROM ubuntu:26.04
 
-# Установка системных зависимостей, Python и Pip
+# Установка компиляторов, инструментов сборки и системных библиотек
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     cmake \
     ninja-build \
+    pkg-config \
     gdb \
     gcc-16 \
     g++-16 \
-    git \
-    curl \
-    zip \
-    unzip \
-    tar \
-    ca-certificates \
-    python3 \
-    python3-pip \
-    python3-venv \
+    # Пакеты Protobuf и gRPC
+    protobuf-compiler \
+    libprotobuf-dev \
+    libgrpc++-dev \
+    protobuf-compiler-grpc \
     && rm -rf /var/lib/apt/lists/*
 
+# Выставляем GCC 16 компилятором по умолчанию
 RUN update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-16 16 \
     --slave /usr/bin/g++ g++ /usr/bin/g++-16
 
-RUN pip install --break-system-packages conan
-
-RUN conan profile detect --force && \
-    echo "compiler.cppstd=gnu26" >> ~/.conan2/profiles/default
-
 WORKDIR /app
 COPY . .
-
-RUN conan install . --output-folder=build --build=missing
