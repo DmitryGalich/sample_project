@@ -50,8 +50,8 @@ services:
 
   core:
     build:
-      context: .
-      dockerfile: core/Dockerfile
+      context: core
+      dockerfile: Dockerfile
     container_name: core
     expose:
       - "50051"
