@@ -1,33 +1,27 @@
 FROM ubuntu:26.04
 
-# Установка системных зависимостей, Python и Pip
-RUN apt-get update && apt-get install -y --no-install-recommends \
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y \
     build-essential \
     cmake \
-    ninja-build \
     gdb \
-    gcc-16 \
-    g++-16 \
     git \
-    curl \
-    zip \
-    unzip \
-    tar \
-    ca-certificates \
-    python3 \
-    python3-pip \
-    python3-venv \
+    pkg-config \
+    libssl-dev \
+    zlib1g-dev \
     && rm -rf /var/lib/apt/lists/*
 
-RUN update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-16 16 \
-    --slave /usr/bin/g++ g++ /usr/bin/g++-16
+WORKDIR /tmp
+RUN git clone --recurse-submodules -b v1.66.0 --depth 1 --shallow-submodules https://github.com/grpc/grpc.git grpc-repo \
+    && cd grpc-repo \
+    && mkdir build && cd build \
+    && cmake -DgRPC_INSTALL=ON \
+             -DgRPC_BUILD_TESTS=OFF \
+             -DCMAKE_BUILD_TYPE=Release \
+             -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+             .. \
+    && make -j$(nproc) \
+    && make install 
 
-RUN pip install --break-system-packages conan
-
-RUN conan profile detect --force && \
-    echo "compiler.cppstd=gnu26" >> ~/.conan2/profiles/default
-
-WORKDIR /app
-COPY . .
-
-RUN conan install . --output-folder=build --build=missing
+WORKDIR /workspace
