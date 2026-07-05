@@ -1,10 +1,3 @@
-// #include <print>
-
-// int main() {
-//     std::println("Hello from Core");
-//     return 0;
-// }
-
 #include <iostream>
 #include <print> // Фича C++23/C++26
 #include <grpcpp/grpcpp.h>
@@ -45,25 +38,3 @@ int main()
 
     return 0;
 }
-
-//     1  cd ..
-//     2  ls
-//     3  cd tmp/
-//     4  ls
-//     5  cd grpc-repo/
-//     6  ls
-//     7  mkdir build
-//     8  cd build
-//     9  cmake -DgRPC_INSTALL=ON              -DgRPC_BUILD_TESTS=OFF              -DCMAKE_BUILD_TYPE=Release              ..
-//    10  cmake --version
-//    11  cmake -DgRPC_INSTALL=ON              -DgRPC_BUILD_TESTS=OFF              -DCMAKE_BUILD_TYPE=Release              -DCMAKE_POLICY_VERSION_MINIMUM=3.5              ..
-//    12  make -j$(nproc)
-//    13  make install
-//    14  cd ..
-//    15  cd workspace
-//    16  ls
-//    17  cd ..
-//    18  ls
-//    19  cd workspaces
-//    20  cd sample_project/
-//    21  history
