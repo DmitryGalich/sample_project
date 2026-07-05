@@ -5,7 +5,7 @@ add_executable(${MAIN_APP_TITLE}
 )
 
 target_link_libraries(${MAIN_APP_TITLE} 
-    # PRIVATE
-    #     gRPC::grpc++
-    #     protobuf::libprotobuf
+    PRIVATE
+        gRPC::grpc++
+        protobuf::libprotobuf
 )

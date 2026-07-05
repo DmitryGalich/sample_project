@@ -1,28 +1,42 @@
 {
     "version": "2.0.0",
     "tasks": [
-        {
-            "label": "main_app_build_debug",
+                {
+            "label": "cmake_clean",
             "type": "shell",
-            "command": "cmake",
+            "command": "rm",
             "args": [
-                "--build", "${workspaceFolder}/build",
-                "--config", "Debug",
-                "--target", "main_app"
-            ],
-            "group": "build",
-            "problemMatcher": ["$gcc"]
+                "-rf",
+                "${workspaceFolder}/build"
+            ]
         },
         {
             "label": "cmake_configure",
             "type": "shell",
             "command": "cmake",
             "args": [
+                "-S", "${workspaceFolder}",
+                "-B", "${workspaceFolder}/build",
+                "-G", "Ninja",
                 "-DCMAKE_BUILD_TYPE=Debug",
-                "-B${workspaceFolder}/build",
-                "${workspaceFolder}"
+                "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
+                "-DCMAKE_C_COMPILER=clang-20",
+                "-DCMAKE_CXX_COMPILER=clang++-20",
+                "-DCMAKE_PREFIX_PATH=/usr/local"
             ],
             "group": "build"
+        },
+        {
+            "label": "main_app_build_debug",
+            "type": "shell",
+            "command": "cmake",
+            "args": [
+                "--build", "${workspaceFolder}/build",
+                "--target", "main_app"
+            ],
+            "group": "build",
+            "dependsOn": "cmake_configure",
+            "problemMatcher": ["$gcc"]
         }
     ]
 }
