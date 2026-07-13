@@ -9,4 +9,10 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 find_package(protobuf REQUIRED)
 find_package(gRPC REQUIRED)
 
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
+include(Proto)
+set(PROTO_SRC_DIR "${CMAKE_CURRENT_SOURCE_DIR}/proto")
+set(PROTO_OUT_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
+file(MAKE_DIRECTORY ${PROTO_OUT_DIR})
+
 add_subdirectory(apps)

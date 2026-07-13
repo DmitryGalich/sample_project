@@ -1,40 +1,56 @@
 #include <iostream>
-#include <print> // Фича C++23/C++26
+#include <memory>
+#include <string>
+#include <format>
+#include <version>
+
 #include <grpcpp/grpcpp.h>
-#include <grpcpp/health_check_service_interface.h>
 #include <grpcpp/ext/proto_server_reflection_plugin.h>
+#include "transport.grpc.pb.h"
 
-int main()
-{
-    // Фича C++26: Анонимный плейсхолдер "_" (замена неиспользуемой переменной)
-    // В C++26 код ниже полностью валиден и не вызывает конфликта имен
-    auto _ = "Тестируем синтаксис C++26";
-    auto _ = "Второй анонимный плейсхолдер в той же области видимости";
+class MessengerCoreServiceImpl final : public messenger::MessengerCoreService::Service {
+    grpc::Status StreamMessages(grpc::ServerContext* context, 
+                                grpc::ServerReaderWriter<messenger::Message, messenger::Message>* stream) override {
+        messenger::Message message;
+        
+        std::cout << "[Core Engine] New client connected to StreamMessages." << std::endl;
 
-    // Фича C++23/C++26: Прямой вывод через std::print вместо std::cout
-    std::print("Инициализация gRPC сервера на стандарте C++26...\n");
+        // Читаем сообщения, пока клиент держит соединение
+        while (stream->Read(&message)) {
+            // Используем фичу C++26: placeholder variable (_)
+            auto _ = std::format("[Message Received] Chat: {}, Sender: {}, Text: {}", 
+                                 message.chat_id(), message.sender_id(), message.content());
+            std::cout << _ << std::endl;
 
-    // Инициализация базового gRPC сервера
-    grpc::ServerBuilder builder;
-    builder.AddListeningPort("0.0.0.0:50051", grpc::InsecureServerCredentials());
+            // Меняем статус и отправляем эхо-ответ обратно в стрим
+            message.set_status(messenger::MessageStatus::DELIVERED);
+            stream->Write(message);
+        }
 
-    // Включаем рефлексию (полезно для отладки утилитами вроде grpcurl)
+        std::cout << "[Core Engine] Client disconnected." << std::endl;
+        return grpc::Status::OK;
+    }
+};
+
+void RunServer() {
+    std::string server_address("0.0.0.0:50051");
+    MessengerCoreServiceImpl service;
+
+    grpc::EnableDefaultHealthCheckService(true);
     grpc::reflection::InitProtoReflectionServerBuilderPlugin();
-
-    // Переводим инициализацию на стабильный BuildAndStart()
+    
+    grpc::ServerBuilder builder;
+    builder.AddListeningPort(server_address, grpc::InsecureServerCredentials());
+    builder.RegisterService(&service);
+    
     std::unique_ptr<grpc::Server> server(builder.BuildAndStart());
+    std::cout << std::format("[Core Engine] Server listening on: {}", server_address) << std::endl;
+    
+    server->Wait();
+}
 
-    if (server)
-    {
-        std::print("gRPC сервер успешно запущен на порту 50051!\n");
-        // Чтобы сервер не завершал работу сразу, обычно вызывают ожидание:
-        // server->Wait();
-    }
-    else
-    {
-        std::print(stderr, "Ошибка: не удалось создать и запустить gRPC сервер.\n");
-        return 1;
-    }
-
+int main() {
+    std::cout << std::format("[Core Engine] Starting... C++ Standard Macro: {}", __cplusplus) << std::endl;
+    RunServer();
     return 0;
 }

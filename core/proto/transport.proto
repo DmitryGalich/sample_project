@@ -1,0 +1,22 @@
+syntax = "proto3";
+
+package messenger;
+
+enum MessageStatus {
+    SENT = 0;
+    DELIVERED = 1;
+    READ = 2;
+}
+
+message Message {
+    string message_id = 1;
+    string chat_id = 2;
+    string sender_id = 3;
+    string content = 4;
+    int64 timestamp = 5;
+    MessageStatus status = 6;
+}
+
+service MessengerCoreService {
+    rpc StreamMessages(stream Message) returns (stream Message);
+}
