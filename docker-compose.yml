@@ -2,12 +2,15 @@ version: '3.8'
 
 services:
   gateway:
-    image: envoyproxy/envoy:v1.33.0
+    image: nginx:1.27 
     container_name: gateway
     volumes:
-      - ./gateway/envoy.yml:/etc/envoy/envoy.yaml
+      - ./gateway/nginx.conf:/etc/nginx/nginx.conf:ro
     ports:
       - "8080:8080"
+    depends_on:
+      - core
+    restart: unless-stopped
     networks:
       - internal_network
 
