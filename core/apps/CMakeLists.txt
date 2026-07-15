@@ -16,4 +16,6 @@ target_link_libraries(${MAIN_APP_TITLE}
         gRPC::grpc++
         gRPC::grpc++_reflection
         protobuf::libprotobuf
+
+        modules::network_lib
 )

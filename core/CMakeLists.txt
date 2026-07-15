@@ -16,3 +16,4 @@ set(PROTO_OUT_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
 file(MAKE_DIRECTORY ${PROTO_OUT_DIR})
 
 add_subdirectory(apps)
+add_subdirectory(modules)
