@@ -1,0 +1,43 @@
+# Настройки планировщика задач (Task Processors) Яндекса
+components_manager:
+    task_processors:
+        # Поток для быстрых неблокирующих операций и сетевого ввода-вывода (gRPC)
+        main-task-processor:
+            worker_threads: 4 # Количество ядер CPU, выделенных под корутины сети
+            thread_name: main-worker
+
+        # Изолированный пул потоков для долгих блокирующих операций (например, запись логов)
+        fs-task-processor:
+            worker_threads: 2
+            thread_name: fs-worker
+
+    default_task_processor: main-task-processor
+
+    # Список подключаемых компонентов нашего мессенджера
+    components:
+        # Главный системный компонент логирования userver
+        logging:
+            fs-task-processor: fs-task-processor
+            loggers:
+                default:
+                    file_path: '@stdout' # Выводим логи прямо в консоль Докера
+                    level: info
+                    overflow_behavior: discard
+
+        # Компонент корутинного gRPC-сервера Яндекса
+        grpc-server:
+            port: 50051 # Внутренний порт, который слушает наше C++20 ядро
+            task-processor: main-task-processor
+
+        # Стандартные системные компоненты, необходимые для работы userver
+        server:
+            listener:
+                port: 8082 # Порт для административных метрик и мониторинга (Prometheus)
+                task_processor: main-task-processor
+        seemon: {}
+        statistics-storage: {}
+        dynamic-config:
+            fs-cache-path: ''
+            fs-task-processor: fs-task-processor
+        dynamic-config-fallbacks:
+            fallback-path: ''

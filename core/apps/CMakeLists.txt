@@ -1,21 +1,12 @@
-set(MAIN_APP_TITLE main_app)
+set(MAIN_APP_TITLE messenger_core)
 
 add_executable(${MAIN_APP_TITLE}
-    ${MAIN_APP_TITLE}.cpp
+    main_app.cpp
 )
 
-target_generate_grpc_protos(
-    TARGET     ${MAIN_APP_TITLE}
-    PROTO_FILE "transport.proto"
-    SRC_DIR    ${PROTO_SRC_DIR}
-    OUT_DIR    ${PROTO_OUT_DIR}
-)
-
-target_link_libraries(${MAIN_APP_TITLE} 
-    PRIVATE
-        gRPC::grpc++
-        gRPC::grpc++_reflection
-        protobuf::libprotobuf
-
-        modules::network_lib
+# Форсируем проброс путей к заголовкам (headers) через PRIVATE-линковку
+target_link_libraries(${MAIN_APP_TITLE} PRIVATE
+    userver::core
+    userver::grpc
+    messenger_proto
 )

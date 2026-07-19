@@ -2,18 +2,17 @@ cmake_minimum_required(VERSION 4.1)
 
 project(core VERSION 0.0.1 LANGUAGES C CXX)
 
-set(CMAKE_CXX_STANDARD 26)
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-find_package(protobuf REQUIRED)
-find_package(gRPC REQUIRED)
+# Находим встроенный в образ v3.1 userver Яндекса
+find_package(userver REQUIRED COMPONENTS core grpc)
 
-list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
-include(Proto)
-set(PROTO_SRC_DIR "${CMAKE_CURRENT_SOURCE_DIR}/proto")
-set(PROTO_OUT_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
-file(MAKE_DIRECTORY ${PROTO_OUT_DIR})
+# ИСПРАВЛЕНИЕ: Жестко задаем абсолютный путь к файлу и его базовой папке
+userver_add_grpc_library(messenger_proto
+    PROTOS "${CMAKE_CURRENT_SOURCE_DIR}/proto/transport.proto"
+    INCLUDE_DIRECTORIES "${CMAKE_CURRENT_SOURCE_DIR}/proto"
+)
 
 add_subdirectory(apps)
-add_subdirectory(modules)
