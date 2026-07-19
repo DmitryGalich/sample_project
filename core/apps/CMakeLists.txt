@@ -1,10 +1,9 @@
-set(MAIN_APP_TITLE messenger_core)
+set(MAIN_APP_TITLE main_app)
 
 add_executable(${MAIN_APP_TITLE}
-    main_app.cpp
+    ${MAIN_APP_TITLE}.cpp
 )
 
-# Форсируем проброс путей к заголовкам (headers) через PRIVATE-линковку
 target_link_libraries(${MAIN_APP_TITLE} PRIVATE
     userver::core
     userver::grpc
