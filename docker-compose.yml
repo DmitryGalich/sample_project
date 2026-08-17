@@ -9,7 +9,7 @@ services:
     ports:
       - "8080:8080"
     depends_on:
-      - core
+      - messenger
     restart: unless-stopped
     networks:
       - internal_network
@@ -51,16 +51,22 @@ services:
     networks:
       - internal_network
 
-  core:
+  messenger:
     build:
-      context: core
+      context: ./messenger
       dockerfile: Dockerfile
-    container_name: core
+    container_name: messenger
     expose:
       - "50051"
+    volumes:
+      - ./messenger:/workspace/messenger:cached
+      - ../proto:/workspace/proto:ro
     depends_on:
       - cache
       - database
+    environment:
+      - DATABASE_URL=postgres://admin:admin@database:5432/main_db
+      - REDIS_URL=redis://cache:6379
     restart: unless-stopped
     networks:
       - internal_network
