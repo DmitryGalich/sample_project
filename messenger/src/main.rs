@@ -3,9 +3,9 @@ use tokio::sync::mpsc;
 use tokio_stream::{wrappers::ReceiverStream, Stream};
 use tonic::{transport::Server, Request, Response, Status};
 
-// Импортируем сгенерированный из proto код
+// ПРАВИЛЬНО: Подключаем сгенерированный код, который сделал build.rs
 pub mod proto {
-    tonic::include_proto!("messenger");
+    tonic::include_proto!("messenger"); // "messenger" — это имя пакета (package) из твоего .proto файла
 }
 
 use proto::messenger_core_service_server::{MessengerCoreService, MessengerCoreServiceServer};
@@ -24,7 +24,6 @@ impl MessengerCoreService for MyMessenger {
     ) -> Result<Response<SendMessageResponse>, Status> {
         let req = request.into_inner();
         
-        // В будущем: логика сохранения в PostgreSQL и публикация в Redis Pub/Sub
         let msg = Message {
             id: uuid::Uuid::new_v4().to_string(),
             chat_id: req.chat_id,
@@ -40,7 +39,6 @@ impl MessengerCoreService for MyMessenger {
         &self,
         request: Request<GetHistoryRequest>,
     ) -> Result<Response<GetHistoryResponse>, Status> {
-        // Заглушка истории
         Ok(Response::new(GetHistoryResponse { messages: vec![] }))
     }
 
@@ -48,10 +46,8 @@ impl MessengerCoreService for MyMessenger {
         &self,
         _request: Request<StreamRequest>,
     ) -> Result<Response<Self::StreamMessagesStream>, Status> {
-        // Создаем канал для real-time отправки сообщений клиенту
         let (tx, rx) = mpsc::channel(128);
 
-        // В реальной жизни здесь будет подписка на Redis Pub/Sub и пересылка в tx
         tokio::spawn(async move {
             let sample_msg = Message {
                 id: "1".into(),

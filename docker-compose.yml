@@ -60,7 +60,7 @@ services:
       - "50051"
     volumes:
       - ./messenger:/workspace/messenger:cached
-      - ../proto:/workspace/proto:ro
+      - ../proto:/workspace/messenger/proto:ro
     depends_on:
       - cache
       - database
