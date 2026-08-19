@@ -1,73 +1,32 @@
-use std::pin::Pin;
-use tokio::sync::mpsc;
-use tokio_stream::{wrappers::ReceiverStream, Stream};
-use tonic::{transport::Server, Request, Response, Status};
+// src/main.rs
+use tonic::transport::Server; // Восстановили импорт gRPC сервера
+use sqlx::PgPool;             // Восстановили импорт пула Postgres
 
-// ПРАВИЛЬНО: Подключаем сгенерированный код, который сделал build.rs
-pub mod proto {
-    tonic::include_proto!("messenger"); // "messenger" — это имя пакета (package) из твоего .proto файла
-}
+// Регистрируем наши подмодули в дереве проекта
+pub mod proto;
+pub mod service;
 
-use proto::messenger_core_service_server::{MessengerCoreService, MessengerCoreServiceServer};
-use proto::{GetHistoryRequest, GetHistoryResponse, Message, SendMessageRequest, SendMessageResponse, StreamRequest};
-
-#[derive(Debug, Default)]
-pub struct MyMessenger {}
-
-#[tonic::async_trait]
-impl MessengerCoreService for MyMessenger {
-    type StreamMessagesStream = Pin<Box<dyn Stream<Item = Result<Message, Status>> + Send + 'static>>;
-
-    async fn send_message(
-        &self,
-        request: Request<SendMessageRequest>,
-    ) -> Result<Response<SendMessageResponse>, Status> {
-        let req = request.into_inner();
-        
-        let msg = Message {
-            id: uuid::Uuid::new_v4().to_string(),
-            chat_id: req.chat_id,
-            sender_id: req.sender_id,
-            text: req.text,
-            created_at: chrono::Utc::now().timestamp(),
-        };
-
-        Ok(Response::new(SendMessageResponse { message: Some(msg) }))
-    }
-
-    async fn get_history(
-        &self,
-        request: Request<GetHistoryRequest>,
-    ) -> Result<Response<GetHistoryResponse>, Status> {
-        Ok(Response::new(GetHistoryResponse { messages: vec![] }))
-    }
-
-    async fn stream_messages(
-        &self,
-        _request: Request<StreamRequest>,
-    ) -> Result<Response<Self::StreamMessagesStream>, Status> {
-        let (tx, rx) = mpsc::channel(128);
-
-        tokio::spawn(async move {
-            let sample_msg = Message {
-                id: "1".into(),
-                chat_id: "chat_1".into(),
-                sender_id: "system".into(),
-                text: "Добро пожаловать в чат мастеров!".into(),
-                created_at: chrono::Utc::now().timestamp(),
-            };
-            let _ = tx.send(Ok(sample_msg)).await;
-        });
-
-        let output_stream = ReceiverStream::new(rx);
-        Ok(Response::new(Box::pin(output_stream) as Self::StreamMessagesStream))
-    }
-}
+// Явно вытаскиваем сгенерированный сервер из модуля proto
+use proto::messenger_core_service_server::MessengerCoreServiceServer;
+// Явно вытаскиваем нашу структуру из модуля service
+use service::MyMessenger;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let addr = "0.0.0.0:50051".parse()?;
-    let messenger_service = MyMessenger::default();
+    
+    let database_url = std::env::var("DATABASE_URL")
+        .unwrap_or_else(|_| "postgres://admin:admin@database:5432/main_db".to_string());
+
+    println!("Подключение к PostgreSQL...");
+    let db_pool = PgPool::connect(&database_url).await?;
+
+    println!("Автоматический запуск миграций базы данных...");
+    sqlx::migrate!("./migrations")
+        .run(&db_pool)
+        .await?;
+
+    let messenger_service = MyMessenger::new(db_pool);
 
     println!("Rust gRPC Messenger запущен на {}", addr);
 
