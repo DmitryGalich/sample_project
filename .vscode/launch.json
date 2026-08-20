@@ -1,0 +1,21 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Debug service_users",
+            "type": "lldb",
+            "request": "launch",
+            "cargo": {
+                "args": [
+                    "build"
+                ],
+                "filter": {
+                    "kind": "bin"
+                },
+                "cwd": "${workspaceFolder}/service_users"
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}/service_users"
+        }
+    ]
+}
