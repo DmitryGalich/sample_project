@@ -8,82 +8,82 @@ services:
       - ./gateway/nginx.conf:/etc/nginx/nginx.conf:ro
     ports:
       - "8080:8080"
-    depends_on:
-      - messenger
+    # depends_on:
+    #   - messenger
     restart: unless-stopped
     networks:
       - internal_network
 
-  cache:
-    image: redis:7.4.9-alpine
-    container_name: cache
-    expose:
-      - "6379"
-    restart: unless-stopped
-    networks:
-      - internal_network
+  # cache:
+  #   image: redis:7.4.9-alpine
+  #   container_name: cache
+  #   expose:
+  #     - "6379"
+  #   restart: unless-stopped
+  #   networks:
+  #     - internal_network
 
-  database:
-    image: postgres:16-alpine
-    container_name: database
-    environment:
-      POSTGRES_USER: admin
-      POSTGRES_PASSWORD: admin
-      POSTGRES_DB: main_db
-    expose:
-      - "5432"
-    volumes:
-      - db_data:/var/lib/postgresql/data
-    restart: unless-stopped
-    networks:
-      - internal_network
+  # database:
+  #   image: postgres:16-alpine
+  #   container_name: database
+  #   environment:
+  #     POSTGRES_USER: admin
+  #     POSTGRES_PASSWORD: admin
+  #     POSTGRES_DB: main_db
+  #   expose:
+  #     - "5432"
+  #   volumes:
+  #     - db_data:/var/lib/postgresql/data
+  #   restart: unless-stopped
+  #   networks:
+  #     - internal_network
 
-  auth:
-    image: quay.io/keycloak/keycloak:24.0
-    container_name: auth
-    environment:
-      KEYCLOAK_ADMIN: admin
-      KEYCLOAK_ADMIN_PASSWORD: admin
-    command: start-dev
-    ports:
-      - "8081:8080"
-    restart: unless-stopped
-    networks:
-      - internal_network
+  # auth:
+  #   image: quay.io/keycloak/keycloak:24.0
+  #   container_name: auth
+  #   environment:
+  #     KEYCLOAK_ADMIN: admin
+  #     KEYCLOAK_ADMIN_PASSWORD: admin
+  #   command: start-dev
+  #   ports:
+  #     - "8081:8080"
+  #   restart: unless-stopped
+  #   networks:
+  #     - internal_network
 
-  messenger:
-    build:
-      context: ./messenger
-      dockerfile: Dockerfile
-    container_name: messenger
-    expose:
-      - "50051"
-    volumes:
-      - ./messenger:/workspace/messenger:cached
-      - ../proto:/workspace/messenger/proto:ro
-    depends_on:
-      - cache
-      - database
-    environment:
-      - DATABASE_URL=postgres://admin:admin@database:5432/main_db
-      - REDIS_URL=redis://cache:6379
-    restart: unless-stopped
-    networks:
-      - internal_network
+  # messenger:
+  #   build:
+  #     context: ./messenger
+  #     dockerfile: Dockerfile
+  #   container_name: messenger
+  #   expose:
+  #     - "50051"
+  #   volumes:
+  #     - ./messenger:/workspace/messenger:cached
+  #     - ../proto:/workspace/messenger/proto:ro
+  #   depends_on:
+  #     - cache
+  #     - database
+  #   environment:
+  #     - DATABASE_URL=postgres://admin:admin@database:5432/main_db
+  #     - REDIS_URL=redis://cache:6379
+  #   restart: unless-stopped
+  #   networks:
+  #     - internal_network
 
-  pgadmin:
-    image: dpage/pgadmin4
-    container_name: pgadmin
-    environment:
-      PGADMIN_DEFAULT_EMAIL: admin@admin.com
-      PGADMIN_DEFAULT_PASSWORD: admin
-    ports:
-      - "5050:80"
-    depends_on:
-      - database
-    restart: unless-stopped
-    networks:
-      - internal_network
+  # pgadmin:
+  #   image: dpage/pgadmin4
+  #   container_name: pgadmin
+  #   environment:
+  #     PGADMIN_DEFAULT_EMAIL: admin@admin.com
+  #     PGADMIN_DEFAULT_PASSWORD: admin
+  #   ports:
+  #     - "5050:80"
+  #   depends_on:
+  #     - database
+  #   restart: unless-stopped
+  #   networks:
+  #     - internal_network
 
 volumes:
   db_data:
