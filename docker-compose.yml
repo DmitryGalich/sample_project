@@ -23,6 +23,9 @@ services:
       - service_users_db
     expose:
         - "50051"
+    environment:
+      - EXPOSED_ADDR=0.0.0.0:50051
+      - DATABASE_URL=postgres://admin:admin@database:5432/users_db
     volumes:
       - ./service_users:/workspace/service_users:cached
     restart: unless-stopped

@@ -1,13 +1,10 @@
-// use sqlx::PgPool;
-// use tonic::transport::Server;
-
-// #[tokio::main]
-// async fn main() -> Result<(), Box<dyn std::error::Error>> {
-//     let addr = "0.0.0.0:50051".parse()?;
-
-//     Ok(())
-// }
+use std::env;
 
 fn main() {
-    println!("Hello, World!");
+    let key = "EXPOSED_ADDR";
+
+    match env::var(key) {
+        Ok(val) => println!("{key} is set to: {val}"),
+        Err(e) => println!("Couldn't read {key}: {e}"),
+    }
 }

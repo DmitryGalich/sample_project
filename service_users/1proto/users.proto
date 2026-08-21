@@ -1,0 +1,23 @@
+syntax = "proto3";
+
+package service_users;
+
+service ServiceUsers {
+    rpc AddUser (AddUserRequest) returns (AddUserResponse);
+}
+
+message User {
+    string id = 1;
+    string email = 2;
+    string display_name = 3;
+    string created_at = 4;
+}
+
+message AddUserRequest {
+    string email = 1;
+    string display_name = 2;
+}
+
+message AddUserResponse {
+    User user = 1;
+}
