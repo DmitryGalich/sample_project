@@ -19,7 +19,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             if let Ok(n) = socket.read(&mut buffer).await {
                 if n == 0 { return; }
 
-                let response = "HTTP/1.1 200 OK\r\nContent-Length: 22\r\nContent-Type: text/plain\r\n\r\nHello from raw Tokio!";
+                let response = "HTTP/1.1 200 OK\r\nContent-Length: 22\r\nContent-Type: text/plain\r\n\r\nHello from raw Tokio1!";
                 
                 let _ = socket.write_all(response.as_bytes()).await;
             }

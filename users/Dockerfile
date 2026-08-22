@@ -6,4 +6,4 @@ RUN apt-get update && apt-get install -y \
 
 RUN rustup component add clippy rustfmt
 
-WORKDIR /workspace/service_users
+WORKDIR /workspace/users

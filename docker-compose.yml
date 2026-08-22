@@ -9,32 +9,32 @@ services:
     ports:
       - "8080:8080"
     depends_on:
-      - service_users
+      - users
     restart: unless-stopped
     networks:
       - internal_network
 
-  service_users:
+  users:
     build:
-      context: ./service_users
+      context: ./users
       dockerfile: Dockerfile
-    container_name: service_users
+    container_name: users
     depends_on:
-      - service_users_db
+      - users_db
     expose:
         - "50051"
     environment:
       - EXPOSED_ADDR=0.0.0.0:50051
       - DATABASE_URL=postgres://admin:admin@database:5432/users_db
     volumes:
-      - ./service_users:/workspace/service_users:cached
+      - ./users:/workspace/users:cached
     restart: unless-stopped
     networks:
         - internal_network
 
-  service_users_db:
+  users_db:
     image: postgres:16-alpine
-    container_name: service_users_db
+    container_name: users_db
     environment:
       POSTGRES_USER: admin
       POSTGRES_PASSWORD: admin
