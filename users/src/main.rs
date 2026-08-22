@@ -1,28 +1,24 @@
 use std::env;
+use tonic::transport::Server;
 
-use tokio::net::TcpListener;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+pub mod users_grpc {
+    tonic::include_proto!("users");
+}
+
+mod module_service;
+
+use module_service::MyUsersService;
+use users_grpc::users_service_server::UsersServiceServer;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let exposed_addr = env::var("EXPOSED_ADDR")?;
- 
-    let listener = TcpListener::bind(exposed_addr.clone()).await?;
-    println!("Raw TCP/HTTP Server running on {exposed_addr}...");
+    let exposed_addr = env::var("EXPOSED_ADDR")?.parse()?;
+    println!("gRPC Users Service running on {}...", exposed_addr);
 
-    loop {
-        let (mut socket, _) = listener.accept().await?;
+    Server::builder()
+        .add_service(UsersServiceServer::new(MyUsersService::default()))
+        .serve(exposed_addr)
+        .await?;
 
-        tokio::spawn(async move {
-            let mut buffer = [0; 1024];
-            
-            if let Ok(n) = socket.read(&mut buffer).await {
-                if n == 0 { return; }
-
-                let response = "HTTP/1.1 200 OK\r\nContent-Length: 22\r\nContent-Type: text/plain\r\n\r\nHello from raw Tokio1!";
-                
-                let _ = socket.write_all(response.as_bytes()).await;
-            }
-        });
-    }
+    Ok(())
 }
