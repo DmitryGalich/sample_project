@@ -3,7 +3,7 @@ use tonic::{Request, Response, Status};
 use crate::users_grpc::users_service_server::UsersService;
 use crate::users_grpc::{
     AddUserRequest, AddUserResponse, 
-    GetAllUsersRequest, GetAllUsersResponse, // 🌟 Теперь это будет работать!
+    GetAllUsersRequest, GetAllUsersResponse,
     GetUserRequest, GetUserResponse, User
 };
 
@@ -12,7 +12,6 @@ pub struct MyUsersService {}
 
 #[tonic::async_trait]
 impl UsersService for MyUsersService {
-    // 1. Добавление пользователя
     async fn add_user(&self, request: Request<AddUserRequest>) -> Result<Response<AddUserResponse>, Status> {
         let req = request.into_inner();
         
@@ -26,7 +25,6 @@ impl UsersService for MyUsersService {
         Ok(Response::new(AddUserResponse { user: Some(new_user) }))
     }
 
-    // 2. Получение пользователя по ID
     async fn get_user(&self, request: Request<GetUserRequest>) -> Result<Response<GetUserResponse>, Status> {
         let req = request.into_inner();
 
@@ -40,13 +38,11 @@ impl UsersService for MyUsersService {
         Ok(Response::new(GetUserResponse { user: Some(user) }))
     }
 
-    // 3. Получение всех пользователей с учетом лимита
     async fn get_all_users(&self, request: Request<GetAllUsersRequest>) -> Result<Response<GetAllUsersResponse>, Status> {
         // Извлекаем пришедший лимит из запроса
         let req = request.into_inner();
         let limit = req.limit as usize;
 
-        // Наш фейковый список пользователей
         let mut all_users = vec![
             User {
                 id: "1".to_string(),
@@ -68,7 +64,6 @@ impl UsersService for MyUsersService {
             },
         ];
 
-        // Если limit передан (больше 0), обрезаем массив до нужного количества
         if limit > 0 {
             all_users.truncate(limit);
         }
