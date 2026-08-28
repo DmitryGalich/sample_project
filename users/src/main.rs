@@ -29,12 +29,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let db_pool = PgPool::connect(&database_url)
         .await
         .context("Not connected to database")?;
-
     
-    // sqlx::migrate!("./migrations")
-    //     .run(&db_pool)
-    //     .await
-    //     .context("Error while database migration")?;
+    sqlx::migrate!("./migrations")
+        .run(&db_pool)
+        .await
+        .context("Error while database migration")?;
 
     println!("Run...");
 

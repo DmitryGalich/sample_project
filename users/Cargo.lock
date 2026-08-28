@@ -2422,6 +2422,7 @@ dependencies = [
  "axum 0.7.9",
  "chrono",
  "prost",
+ "prost-types",
  "sqlx",
  "tokio",
  "tonic",
