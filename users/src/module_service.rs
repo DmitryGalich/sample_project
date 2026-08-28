@@ -1,16 +1,14 @@
-use tonic::{Request, Response, Status};
-use sqlx::PgPool;
-use uuid::Uuid;
 use chrono::{DateTime, Utc};
-use sqlx::postgres::PgRow;
+use sqlx::PgPool;
 use sqlx::Row;
+use sqlx::postgres::PgRow;
+use tonic::{Request, Response, Status};
+use uuid::Uuid;
 
 use crate::users_grpc::users_service_server::UsersService;
 use crate::users_grpc::{
-    AddUserRequest, AddUserResponse, 
-    GetAllUsersRequest, GetAllUsersResponse, GetUserRequest,
-    GetUserResponse, 
-    User,
+    AddUserRequest, AddUserResponse, GetAllUsersRequest, GetAllUsersResponse, GetUserRequest,
+    GetUserResponse, User,
 };
 
 #[derive(Debug)]
@@ -18,7 +16,8 @@ pub struct MyUsersService {
     db_pool: PgPool,
 }
 
-impl MyUsersService {  // Исправили имя
+impl MyUsersService {
+    // Исправили имя
     pub fn new(db_pool: PgPool) -> Self {
         Self { db_pool }
     }
@@ -39,7 +38,6 @@ impl UsersService for MyUsersService {
         &self,
         request: Request<AddUserRequest>,
     ) -> Result<Response<AddUserResponse>, Status> {
-
         let req = request.into_inner();
 
         let row = sqlx::query(
@@ -47,7 +45,7 @@ impl UsersService for MyUsersService {
             INSERT INTO users (email, display_name) 
             VALUES ($1, $2)
             RETURNING id, email, display_name, created_at
-            "#
+            "#,
         )
         .bind(&req.email)
         .bind(&req.display_name)
@@ -56,31 +54,14 @@ impl UsersService for MyUsersService {
         .map_err(|e| Status::internal(e.to_string()))?;
 
         Ok(Response::new(AddUserResponse {
-            user: Some(Self::row_to_user(row))
+            user: Some(Self::row_to_user(row)),
         }))
-
-
-        // let req = request.into_inner();
-
-        // // Используем RETURNING чтобы получить созданные id и created_at
-        // let user = sqlx::query_as!(
-        //     User,
-        //     r#"
-        //     INSERT INTO users (email, display_name) 
-        //     VALUES ($1, $2)
-        //     RETURNING id, email, display_name, created_at
-        //     "#,
-        //     req.email,
-        //     req.display_name
-        // )
-        // .fetch_one(&self.db_pool)
-        // .await
-        // .map_err(|e| Status::internal(e.to_string()))?;
-
-        // Ok(Response::new(AddUserResponse { user: Some(user) }))
     }
 
-    async fn get_user(&self, request: Request<GetUserRequest>) -> Result<Response<GetUserResponse>, Status> {
+    async fn get_user(
+        &self,
+        request: Request<GetUserRequest>,
+    ) -> Result<Response<GetUserResponse>, Status> {
         let req = request.into_inner();
 
         let user = User {
@@ -93,7 +74,10 @@ impl UsersService for MyUsersService {
         Ok(Response::new(GetUserResponse { user: Some(user) }))
     }
 
-    async fn get_all_users(&self, request: Request<GetAllUsersRequest>) -> Result<Response<GetAllUsersResponse>, Status> {
+    async fn get_all_users(
+        &self,
+        request: Request<GetAllUsersRequest>,
+    ) -> Result<Response<GetAllUsersResponse>, Status> {
         // Извлекаем пришедший лимит из запроса
         let req = request.into_inner();
         let limit = req.limit as usize;
@@ -123,8 +107,6 @@ impl UsersService for MyUsersService {
             all_users.truncate(limit);
         }
 
-        Ok(Response::new(GetAllUsersResponse {
-            users: all_users,
-        }))
+        Ok(Response::new(GetAllUsersResponse { users: all_users }))
     }
 }
