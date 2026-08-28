@@ -25,7 +25,7 @@ services:
         - "50051"
     environment:
       - EXPOSED_ADDR=0.0.0.0:50051
-      - DATABASE_URL=postgres://admin:admin@database:5432/users_db
+      - DATABASE_URL=postgres://admin:admin@users_db:5432/users_db
     volumes:
       - ./users:/workspace/users:cached
     restart: unless-stopped
@@ -42,86 +42,27 @@ services:
     expose:
       - "5432"
     volumes:
-      - service_users_db_data:/var/lib/postgresql/data
+      - users_db_data:/var/lib/postgresql/data
     restart: unless-stopped
     networks:
       - internal_network
 
-  # pgadmin:
-  #   image: dpage/pgadmin4
-  #   container_name: pgadmin
-  #   environment:
-  #     PGADMIN_DEFAULT_EMAIL: admin@admin.com
-  #     PGADMIN_DEFAULT_PASSWORD: admin
-  #   ports:
-  #     - "5050:80"
-  #   depends_on:
-  #     - database
-  #   restart: unless-stopped
-  #   networks:
-  #     - internal_network
-
-  # cache:
-  #   image: redis:7.4.9-alpine
-  #   container_name: cache
-  #   expose:
-  #     - "6379"
-  #   restart: unless-stopped
-  #   networks:
-  #     - internal_network
-
-  # database:
-  #   image: postgres:16-alpine
-  #   container_name: database
-  #   environment:
-  #     POSTGRES_USER: admin
-  #     POSTGRES_PASSWORD: admin
-  #     POSTGRES_DB: main_db
-  #   expose:
-  #     - "5432"
-  #   volumes:
-  #     - db_data:/var/lib/postgresql/data
-  #   restart: unless-stopped
-  #   networks:
-  #     - internal_network
-
-  # auth:
-  #   image: quay.io/keycloak/keycloak:24.0
-  #   container_name: auth
-  #   environment:
-  #     KEYCLOAK_ADMIN: admin
-  #     KEYCLOAK_ADMIN_PASSWORD: admin
-  #   command: start-dev
-  #   ports:
-  #     - "8081:8080"
-  #   restart: unless-stopped
-  #   networks:
-  #     - internal_network
-
-  # messenger:
-  #   build:
-  #     context: ./messenger
-  #     dockerfile: Dockerfile
-  #   container_name: messenger
-  #   expose:
-  #     - "50051"
-  #   volumes:
-  #     - ./messenger:/workspace/messenger:cached
-  #     - ../proto:/workspace/messenger/proto:ro
-  #   depends_on:
-  #     - cache
-  #     - database
-  #   environment:
-  #     - DATABASE_URL=postgres://admin:admin@database:5432/main_db
-  #     - REDIS_URL=redis://cache:6379
-  #   restart: unless-stopped
-  #   networks:
-  #     - internal_network
-
-
+  pgadmin:
+    image: dpage/pgadmin4
+    container_name: pgadmin
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@admin.com
+      PGADMIN_DEFAULT_PASSWORD: admin
+    ports:
+      - "5050:80"
+    depends_on:
+      - users_db
+    restart: unless-stopped
+    networks:
+      - internal_network
 
 volumes:
-  service_users_db_data:
+  users_db_data:
 
 networks:
   internal_network:

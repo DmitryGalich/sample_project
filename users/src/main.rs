@@ -1,4 +1,5 @@
 use anyhow::Context;
+use sqlx::PgPool;
 use std::env;
 use tonic::transport::Server;
 
@@ -17,17 +18,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .context("Not found env var EXPOSED_ADDR")?
         .parse()
         .context("Not parsed env var EXPOSED_ADDR")?;
-    let database_url: String = env::var("DATABASE_URL1")
-        .context("Not found env var EXPOSED_ADDR")?
-        .parse()
-        .context("Not parsed env var DATABASE_URL1")?;
+    println!("EXPOSED_ADDR: {}", exposed_addr);
 
-    println!("Address: {}", exposed_addr);
-    println!("Db url: {}", database_url);
+    let database_url: String = env::var("DATABASE_URL")
+        .context("Not found env var DATABASE_URL")?
+        .parse()
+        .context("Not parsed env var DATABASE_URL")?;
+    println!("DATABASE_URL: {}", database_url);
+
+    let db_pool = PgPool::connect(&database_url)
+        .await
+        .context("Not connected to database")?;
+
+    sqlx::migrate!("./migrations")
+        .run(&db_pool)
+        .await
+        .context("Error while database migration")?;
+
     println!("Run...");
 
     Server::builder()
-        .add_service(UsersServiceServer::new(MyUsersService::default()))
+        .add_service(UsersServiceServer::new(MyUsersService::new(db_pool)))
         .serve(exposed_addr)
         .await?;
 

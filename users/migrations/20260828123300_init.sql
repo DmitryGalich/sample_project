@@ -4,5 +4,3 @@ CREATE TABLE users (
     display_name VARCHAR(100) NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
-
-CREATE INDEX idx_users_email ON users(email);
