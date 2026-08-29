@@ -26,7 +26,7 @@ CREATE TABLE IF NOT EXISTS users (
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
     edited_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
     deleted_at TIMESTAMP WITH TIME ZONE DEFAULT NULL,
-    last_login_at TIMESTAMP WITH TIME ZONE DEFAULT NULL,
+    last_login_at TIMESTAMP WITH TIME ZONE DEFAULT NULL
     
     -- -- Индексы для быстрого поиска
     -- CONSTRAINT users_email_active_unique UNIQUE (email) 

@@ -12,3 +12,8 @@ grpcurl -plaintext \
   localhost:8080 \
   users.UsersService/AddUser
 ```
+
+* Применение миграций
+```
+sqlx migrate run --database-url $DATABASE_URL
+```

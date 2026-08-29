@@ -12,7 +12,8 @@ INSERT INTO users (
     is_active,
     created_at,
     edited_at,
-    last_login_at
+    last_login_at,
+    deleted_at -- Добавили столбец сюда
 ) VALUES 
 
 -- Администратор
@@ -20,7 +21,7 @@ INSERT INTO users (
     '11111111-1111-1111-1111-111111111111',
     'admin@example.com',
     'Admin User',
-    'hashed_password_123', -- В реальности здесь должен быть хеш
+    'hashed_password_123',
     'Admin',
     'System',
     'https://example.com/avatars/admin.jpg',
@@ -30,7 +31,8 @@ INSERT INTO users (
     true,
     NOW() - INTERVAL '30 days',
     NOW() - INTERVAL '30 days',
-    NOW() - INTERVAL '1 hour'
+    NOW() - INTERVAL '1 hour',
+    NULL -- Добавили NULL для deleted_at
 ),
 
 -- Активные пользователи (customer)
@@ -48,7 +50,8 @@ INSERT INTO users (
     true,
     NOW() - INTERVAL '20 days',
     NOW() - INTERVAL '10 days',
-    NOW() - INTERVAL '2 hours'
+    NOW() - INTERVAL '2 hours',
+    NULL
 ),
 (
     '33333333-3333-3333-3333-333333333333',
@@ -64,7 +67,8 @@ INSERT INTO users (
     true,
     NOW() - INTERVAL '15 days',
     NOW() - INTERVAL '5 days',
-    NOW() - INTERVAL '1 day'
+    NOW() - INTERVAL '1 day',
+    NULL
 ),
 (
     '44444444-4444-4444-4444-444444444444',
@@ -80,7 +84,8 @@ INSERT INTO users (
     true,
     NOW() - INTERVAL '10 days',
     NOW() - INTERVAL '3 days',
-    NOW() - INTERVAL '3 hours'
+    NOW() - INTERVAL '3 hours',
+    NULL
 ),
 
 -- Активные пользователи (master)
@@ -98,7 +103,8 @@ INSERT INTO users (
     true,
     NOW() - INTERVAL '25 days',
     NOW() - INTERVAL '7 days',
-    NOW() - INTERVAL '4 hours'
+    NOW() - INTERVAL '4 hours',
+    NULL
 ),
 (
     '66666666-6666-6666-6666-666666666666',
@@ -114,7 +120,8 @@ INSERT INTO users (
     true,
     NOW() - INTERVAL '18 days',
     NOW() - INTERVAL '8 days',
-    NOW() - INTERVAL '5 hours'
+    NOW() - INTERVAL '5 hours',
+    NULL
 ),
 
 -- Неактивный пользователь
@@ -132,7 +139,8 @@ INSERT INTO users (
     false,
     NOW() - INTERVAL '40 days',
     NOW() - INTERVAL '20 days',
-    NOW() - INTERVAL '30 days'
+    NOW() - INTERVAL '30 days',
+    NULL
 ),
 
 -- Мягко удаленный пользователь
@@ -151,8 +159,9 @@ INSERT INTO users (
     NOW() - INTERVAL '50 days',
     NOW() - INTERVAL '40 days',
     NOW() - INTERVAL '35 days',
-    NOW() - INTERVAL '5 days' -- deleted_at
+    NOW() - INTERVAL '5 days'
 );
+
 
 -- -- Вставляем дополнительные пользователи для тестирования пагинации
 -- INSERT INTO users (
