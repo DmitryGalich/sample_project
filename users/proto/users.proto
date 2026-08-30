@@ -20,18 +20,21 @@ message User {
     string email = 2;
     string display_name = 3;
     
-    google.protobuf.Timestamp created_at = 4;
-    google.protobuf.Timestamp deleted_at = 5; 
-    
-    bool is_active = 6;
-    
-    string first_name = 7;
-    string last_name = 8;
-    string avatar_url = 9;
-    string phone = 10;
-    string bio = 11;
-    
-    string role = 12; // customer, master
+    string password_hash = 4; 
+
+    optional string first_name = 5;
+    optional string last_name = 6;
+    optional string avatar_url = 7;
+    optional string phone = 8;
+    optional string bio = 9;
+
+    string user_role = 10; // customer, master, admin
+    bool is_active = 11;    
+
+    google.protobuf.Timestamp created_at = 12;
+    optional google.protobuf.Timestamp edited_at = 13; 
+    optional google.protobuf.Timestamp deleted_at = 14;  
+    optional google.protobuf.Timestamp last_login_at = 15; 
 }
 
 message AddUserRequest {
@@ -39,13 +42,13 @@ message AddUserRequest {
     string display_name = 2;
     string password = 3;
     
-    string first_name = 4;
-    string last_name = 5;
-    string avatar_url = 6;
-    string phone = 7;
-    string bio = 8;
+    optional string first_name = 4;
+    optional string last_name = 5;
+    optional string avatar_url = 6;
+    optional string phone = 7;
+    optional string bio = 8;
     
-    string role = 9; // Default as customer
+    string user_role = 9; // По умолчанию на бэкенде ставим "customer"
 }
 
 message AddUserResponse {
@@ -72,7 +75,7 @@ message UpdateUserRequest {
     optional string avatar_url = 8;
     optional string phone = 9;
     optional string bio = 10;
-    optional string role = 11;
+    optional string user_role = 11;
 }
 
 message UpdateUserResponse {
@@ -81,8 +84,7 @@ message UpdateUserResponse {
 
 message DeleteUserRequest {
     string id = 1;
-    
-    string reason = 2;
+    optional string reason = 2;
 }
 
 message DeleteUserResponse {
@@ -102,4 +104,3 @@ message RestoreUserResponse {
 message HardDeleteUserRequest {
     string id = 1;
 }
-
