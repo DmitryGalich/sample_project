@@ -6,12 +6,12 @@ import "google/protobuf/timestamp.proto";
 import "google/protobuf/empty.proto";
 
 service UsersService {
-    rpc AddUser (AddUserRequest) returns (AddUserResponse);
+    // rpc AddUser (AddUserRequest) returns (AddUserResponse);
     rpc GetUser (GetUserRequest) returns (GetUserResponse);
-    rpc UpdateUser (UpdateUserRequest) returns (UpdateUserResponse);
-    rpc DeleteUser (DeleteUserRequest) returns (DeleteUserResponse);
-    rpc RestoreUser (RestoreUserRequest) returns (RestoreUserResponse);
-    rpc HardDeleteUser (HardDeleteUserRequest) returns (google.protobuf.Empty);
+    // rpc UpdateUser (UpdateUserRequest) returns (UpdateUserResponse);
+    // rpc DeleteUser (DeleteUserRequest) returns (DeleteUserResponse);
+    // rpc RestoreUser (RestoreUserRequest) returns (RestoreUserResponse);
+    // rpc HardDeleteUser (HardDeleteUserRequest) returns (google.protobuf.Empty);
 }
 
 message User {

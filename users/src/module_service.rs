@@ -1,15 +1,11 @@
 use chrono::{DateTime, Utc};
-use sqlx::PgPool;
-use sqlx::Row;
 use sqlx::postgres::PgRow;
+use sqlx::{PgPool, Row};
 use tonic::{Request, Response, Status};
 use uuid::Uuid;
 
 use crate::users_grpc::users_service_server::UsersService;
-use crate::users_grpc::{
-    AddUserRequest, AddUserResponse, GetAllUsersRequest, GetAllUsersResponse, GetUserRequest,
-    GetUserResponse, User,
-};
+use crate::users_grpc::{GetUserRequest, GetUserResponse, User};
 
 #[derive(Debug)]
 pub struct MyUsersService {
@@ -17,9 +13,16 @@ pub struct MyUsersService {
 }
 
 impl MyUsersService {
-    // Исправили имя
     pub fn new(db_pool: PgPool) -> Self {
         Self { db_pool }
+    }
+
+    // Вспомогательная функция для конвертации времени из Chrono в Protobuf Timestamp
+    fn to_proto_timestamp(dt: DateTime<Utc>) -> prost_types::Timestamp {
+        prost_types::Timestamp {
+            seconds: dt.timestamp(),
+            nanos: dt.timestamp_subsec_nanos() as i32,
+        }
     }
 
     fn row_to_user(row: PgRow) -> User {
@@ -27,36 +30,59 @@ impl MyUsersService {
             id: row.get::<Uuid, _>("id").to_string(),
             email: row.get("email"),
             display_name: row.get("display_name"),
-            created_at: row.get::<DateTime<Utc>, _>("created_at").to_rfc3339(),
+            password_hash: row.get("password_hash"),
+            
+            // Поля со свойством optional в proto файле ожидают Option в Rust
+            first_name: row.get::<Option<String>, _>("first_name"),
+            last_name: row.get::<Option<String>, _>("last_name"),
+            avatar_url: row.get::<Option<String>, _>("avatar_url"),
+            phone: row.get::<Option<String>, _>("phone"),
+            bio: row.get::<Option<String>, _>("bio"),
+            
+            user_role: row.get("user_role"),
+            is_active: row.get("is_active"),
+
+            // Обязательные даты заворачиваем в Some(), опциональные маппим через .map
+            created_at: Some(Self::to_proto_timestamp(row.get::<DateTime<Utc>, _>("created_at"))),
+            edited_at: row.get::<Option<DateTime<Utc>>, _>("edited_at").map(Self::to_proto_timestamp),
+            deleted_at: row.get::<Option<DateTime<Utc>>, _>("deleted_at").map(Self::to_proto_timestamp),
+            last_login_at: row.get::<Option<DateTime<Utc>>, _>("last_login_at").map(Self::to_proto_timestamp),
         }
     }
 }
 
 #[tonic::async_trait]
 impl UsersService for MyUsersService {
-    async fn add_user(
+    async fn get_user(
         &self,
-        request: Request<AddUserRequest>,
-    ) -> Result<Response<AddUserResponse>, Status> {
+        request: Request<GetUserRequest>,
+    ) -> Result<Response<GetUserResponse>, Status> {
         let req = request.into_inner();
 
-        let row = sqlx::query(
+        // Парсим UUID из строки запроса. Если формат неверный, возвращаем клиенту ошибку
+        let user_id = Uuid::parse_str(&req.id)
+            .map_err(|_| Status::invalid_argument("Неверный формат UUID"))?;
+
+        let row_result = sqlx::query(
             r#"
-            INSERT INTO users (email, display_name) 
-            VALUES ($1, $2)
-            RETURNING id, email, display_name, created_at
+            SELECT 
+                id, email, display_name, password_hash, 
+                first_name, last_name, avatar_url, phone, bio, 
+                user_role, is_active, created_at, edited_at, deleted_at, last_login_at
+            FROM users 
+            WHERE id = $1
             "#,
         )
-        .bind(&req.email)
-        .bind(&req.display_name)
-        .fetch_one(&self.db_pool)
+        .bind(user_id)
+        .fetch_optional(&self.db_pool) // используем fetch_optional, чтобы мягко обработать отсутствие записи
         .await
         .map_err(|e| Status::internal(e.to_string()))?;
 
-        Ok(Response::new(AddUserResponse {
-            user: Some(Self::row_to_user(row)),
-        }))
+        match row_result {
+            Some(row) => Ok(Response::new(GetUserResponse {
+                user: Some(Self::row_to_user(row)),
+            })),
+            None => Err(Status::not_found("Пользователь не найден")),
+        }
     }
-
-
 }
