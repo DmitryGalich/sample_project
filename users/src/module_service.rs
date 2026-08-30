@@ -9,8 +9,8 @@ use uuid::Uuid;
 use crate::users_grpc::users_service_server::UsersService;
 use crate::users_grpc::{
     AddUserRequest, AddUserResponse, DeleteUserRequest, DeleteUserResponse, GetUserRequest,
-    GetUserResponse, RestoreUserRequest, RestoreUserResponse, UpdateUserRequest,
-    UpdateUserResponse, User,
+    GetUserResponse, HardDeleteUserRequest, HardDeleteUserResponse, RestoreUserRequest,
+    RestoreUserResponse, UpdateUserRequest, UpdateUserResponse, User,
 };
 
 #[derive(Debug)]
@@ -375,6 +375,43 @@ impl UsersService for MyUsersService {
             None => Err(Status::not_found(
                 "Пользователь не найден или не нуждается в восстановлении",
             )),
+        }
+    }
+
+    async fn hard_delete_user(
+        &self,
+        request: Request<HardDeleteUserRequest>,
+    ) -> Result<Response<HardDeleteUserResponse>, Status> {
+        let req = request.into_inner();
+
+        // 1. Валидируем UUID пользователя
+        let user_id = Uuid::parse_str(&req.id)
+            .map_err(|_| Status::invalid_argument("Неверный формат UUID"))?;
+
+        // 2. Выполняем физическое удаление строки из базы данных
+        let row_result = sqlx::query(
+            r#"
+            DELETE FROM users 
+            WHERE id = $1
+            RETURNING id
+            "#,
+        )
+        .bind(user_id)
+        .fetch_optional(&self.db_pool)
+        .await
+        .map_err(|e| Status::internal(e.to_string()))?;
+
+        // 3. Формируем ответ
+        match row_result {
+            Some(row) => {
+                let deleted_id: Uuid = row.get("id");
+                Ok(Response::new(HardDeleteUserResponse {
+                    id: deleted_id.to_string(),
+                    success: true,
+                }))
+            }
+            // Если пользователя с таким ID вообще не было в базе данных
+            None => Err(Status::not_found("Пользователь не найден")),
         }
     }
 }
