@@ -1,3 +1,4 @@
+use bcrypt::{hash, DEFAULT_COST};
 use chrono::{DateTime, Utc};
 use sqlx::postgres::PgRow;
 use sqlx::{PgPool, Row};
@@ -5,7 +6,7 @@ use tonic::{Request, Response, Status};
 use uuid::Uuid;
 
 use crate::users_grpc::users_service_server::UsersService;
-use crate::users_grpc::{GetUserRequest, GetUserResponse, User};
+use crate::users_grpc::{AddUserRequest, AddUserResponse, GetUserRequest, GetUserResponse, User};
 
 #[derive(Debug)]
 pub struct MyUsersService {
@@ -15,13 +16,6 @@ pub struct MyUsersService {
 impl MyUsersService {
     pub fn new(db_pool: PgPool) -> Self {
         Self { db_pool }
-    }
-
-    fn to_proto_timestamp(dt: DateTime<Utc>) -> prost_types::Timestamp {
-        prost_types::Timestamp {
-            seconds: dt.timestamp(),
-            nanos: dt.timestamp_subsec_nanos() as i32,
-        }
     }
 
     fn row_to_user(row: PgRow) -> User {
@@ -40,16 +34,19 @@ impl MyUsersService {
             user_role: row.get("user_role"),
             is_active: row.get("is_active"),
 
-        created_at: row.get::<DateTime<Utc>, _>("created_at").timestamp(),
-        
-        edited_at: row.get::<Option<DateTime<Utc>>, _>("edited_at")
-            .map(|dt| dt.timestamp()),
-            
-        deleted_at: row.get::<Option<DateTime<Utc>>, _>("deleted_at")
-            .map(|dt| dt.timestamp()),
-            
-        last_login_at: row.get::<Option<DateTime<Utc>>, _>("last_login_at")
-            .map(|dt| dt.timestamp()),
+            created_at: row.get::<DateTime<Utc>, _>("created_at").timestamp(),
+
+            edited_at: row
+                .get::<Option<DateTime<Utc>>, _>("edited_at")
+                .map(|dt| dt.timestamp()),
+
+            deleted_at: row
+                .get::<Option<DateTime<Utc>>, _>("deleted_at")
+                .map(|dt| dt.timestamp()),
+
+            last_login_at: row
+                .get::<Option<DateTime<Utc>>, _>("last_login_at")
+                .map(|dt| dt.timestamp()),
         }
     }
 }
@@ -86,5 +83,63 @@ impl UsersService for MyUsersService {
             })),
             None => Err(Status::not_found("Пользователь не найден")),
         }
+    }
+
+    async fn add_user(
+        &self,
+        request: Request<AddUserRequest>,
+    ) -> Result<Response<AddUserResponse>, Status> {
+        let req = request.into_inner();
+
+        // 1. Хэшируем пароль. DEFAULT_COST (12 раундов) — это баланс скорости и безопасности
+        let password_hash = hash(&req.password, DEFAULT_COST)
+            .map_err(|e| Status::internal(format!("Ошибка хэширования пароля: {}", e)))?;
+
+        // 2. Валидируем и выставляем роль по умолчанию, если она пустая
+        let user_role = if req.user_role.trim().is_empty() {
+            "customer".to_string()
+        } else {
+            req.user_role
+        };
+
+        // 3. Выполняем INSERT в базу данных
+        let row = sqlx::query(
+            r#"
+            INSERT INTO users (
+                email, display_name, password_hash, 
+                first_name, last_name, avatar_url, phone, bio, user_role
+            ) 
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            RETURNING 
+                id, email, display_name, password_hash, 
+                first_name, last_name, avatar_url, phone, bio, 
+                user_role, is_active, created_at, edited_at, deleted_at, last_login_at
+            "#,
+        )
+        .bind(&req.email)
+        .bind(&req.display_name)
+        .bind(password_hash)
+        .bind(&req.first_name)
+        .bind(&req.last_name)
+        .bind(&req.avatar_url)
+        .bind(&req.phone)
+        .bind(&req.bio)
+        .bind(user_role)
+        .fetch_one(&self.db_pool)
+        .await
+        .map_err(|e| {
+            // Обрабатываем ошибку уникальности (если такой email уже зарегистрирован)
+            if let Some(db_err) = e.as_database_error() {
+                if db_err.is_unique_violation() {
+                    return Status::already_exists("Пользователь с таким email уже существует");
+                }
+            }
+            Status::internal(e.to_string())
+        })?;
+
+        // 4. Возвращаем созданного пользователя, используя наш готовый row_to_user
+        Ok(Response::new(AddUserResponse {
+            user: Some(Self::row_to_user(row)),
+        }))
     }
 }

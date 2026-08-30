@@ -4,16 +4,16 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-tokio = { version = "1.38", features = ["full"] } # Рекомендуется обновить вместе с tonic
+tokio = { version = "1.38", features = ["full"] }
 axum = "0.7"
-tonic = "0.12"        # <- ОБНОВИТЬ
-prost = "0.13"        # <- ОБНОВИТЬ (для совместимости с tonic 0.12)
-prost-types = "0.13"  # <- ОБНОВИТЬ
+tonic = "0.12"
+prost = "0.13"
+prost-types = "0.13"
 anyhow = "1.0"
 sqlx = { version = "0.7", features = [ "runtime-tokio-native-tls", "postgres", "uuid", "chrono" ] }
 uuid = { version = "1.8", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
-# async-trait больше НЕ НУЖЕН, можно удалить
+bcrypt = "0.15"
 
 [build-dependencies]
-tonic-build = "0.12"  # <- ОБНОВИТЬ
+tonic-build = "0.12"
