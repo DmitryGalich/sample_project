@@ -8,8 +8,8 @@ use uuid::Uuid;
 
 use crate::users_grpc::users_service_server::UsersService;
 use crate::users_grpc::{
-    AddUserRequest, AddUserResponse, GetUserRequest, GetUserResponse, UpdateUserRequest,
-    UpdateUserResponse, User,
+    AddUserRequest, AddUserResponse, DeleteUserRequest, DeleteUserResponse, GetUserRequest,
+    GetUserResponse, UpdateUserRequest, UpdateUserResponse, User,
 };
 
 #[derive(Debug)]
@@ -284,6 +284,53 @@ impl UsersService for MyUsersService {
                 user: Some(Self::row_to_user(row)),
             })),
             None => Err(Status::not_found("Пользователь не найден")),
+        }
+    }
+
+    async fn delete_user(
+        &self,
+        request: Request<DeleteUserRequest>,
+    ) -> Result<Response<DeleteUserResponse>, Status> {
+        let req = request.into_inner();
+
+        // 1. Валидируем UUID пользователя
+        let user_id = Uuid::parse_str(&req.id)
+            .map_err(|_| Status::invalid_argument("Неверный формат UUID"))?;
+
+        // 2. Выполняем Soft Delete запрос в базу данных
+        // Выставляем флаг активности в false и фиксируем время удаления NOW()
+        // (Опциональное поле reason вы можете сохранить в отдельную таблицу логов, если потребуется)
+        let row_result = sqlx::query(
+            r#"
+            UPDATE users 
+            SET 
+                is_active = false,
+                deleted_at = NOW()
+            WHERE id = $1 AND deleted_at IS NULL
+            RETURNING id, deleted_at
+            "#,
+        )
+        .bind(user_id)
+        .fetch_optional(&self.db_pool)
+        .await
+        .map_err(|e| Status::internal(e.to_string()))?;
+
+        // 3. Формируем ответ клиенту
+        match row_result {
+            Some(row) => {
+                let id: Uuid = row.get("id");
+                // Достаем записанную дату и сразу конвертируем в Unix Timestamp (секунды)
+                let deleted_at_dt: DateTime<Utc> = row.get("deleted_at");
+                let deleted_at_ts = deleted_at_dt.timestamp();
+
+                Ok(Response::new(DeleteUserResponse {
+                    id: id.to_string(),
+                    success: true,
+                    deleted_at: deleted_at_ts,
+                }))
+            }
+            // Если пользователь не найден или ОН УЖЕ был удален ранее
+            None => Err(Status::not_found("Пользователь не найден или уже удален")),
         }
     }
 }
