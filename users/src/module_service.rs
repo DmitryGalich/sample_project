@@ -1,12 +1,16 @@
 use bcrypt::{hash, DEFAULT_COST};
 use chrono::{DateTime, Utc};
 use sqlx::postgres::PgRow;
+use sqlx::QueryBuilder;
 use sqlx::{PgPool, Row};
 use tonic::{Request, Response, Status};
 use uuid::Uuid;
 
 use crate::users_grpc::users_service_server::UsersService;
-use crate::users_grpc::{AddUserRequest, AddUserResponse, GetUserRequest, GetUserResponse, User};
+use crate::users_grpc::{
+    AddUserRequest, AddUserResponse, GetUserRequest, GetUserResponse, UpdateUserRequest,
+    UpdateUserResponse, User,
+};
 
 #[derive(Debug)]
 pub struct MyUsersService {
@@ -91,18 +95,15 @@ impl UsersService for MyUsersService {
     ) -> Result<Response<AddUserResponse>, Status> {
         let req = request.into_inner();
 
-        // 1. Хэшируем пароль. DEFAULT_COST (12 раундов) — это баланс скорости и безопасности
         let password_hash = hash(&req.password, DEFAULT_COST)
             .map_err(|e| Status::internal(format!("Ошибка хэширования пароля: {}", e)))?;
 
-        // 2. Валидируем и выставляем роль по умолчанию, если она пустая
         let user_role = if req.user_role.trim().is_empty() {
             "customer".to_string()
         } else {
             req.user_role
         };
 
-        // 3. Выполняем INSERT в базу данных
         let row = sqlx::query(
             r#"
             INSERT INTO users (
@@ -128,7 +129,6 @@ impl UsersService for MyUsersService {
         .fetch_one(&self.db_pool)
         .await
         .map_err(|e| {
-            // Обрабатываем ошибку уникальности (если такой email уже зарегистрирован)
             if let Some(db_err) = e.as_database_error() {
                 if db_err.is_unique_violation() {
                     return Status::already_exists("Пользователь с таким email уже существует");
@@ -137,9 +137,153 @@ impl UsersService for MyUsersService {
             Status::internal(e.to_string())
         })?;
 
-        // 4. Возвращаем созданного пользователя, используя наш готовый row_to_user
         Ok(Response::new(AddUserResponse {
             user: Some(Self::row_to_user(row)),
         }))
+    }
+
+    async fn update_user(
+        &self,
+        request: Request<UpdateUserRequest>,
+    ) -> Result<Response<UpdateUserResponse>, Status> {
+        let req = request.into_inner();
+
+        // 1. Валидируем UUID пользователя
+        let user_id = Uuid::parse_str(&req.id)
+            .map_err(|_| Status::invalid_argument("Неверный формат UUID"))?;
+
+        // Сначала проверяем, прислал ли клиент хоть что-нибудь
+        if req.email.is_none()
+            && req.display_name.is_none()
+            && req.password.is_none()
+            && req.is_active.is_none()
+            && req.first_name.is_none()
+            && req.last_name.is_none()
+            && req.avatar_url.is_none()
+            && req.phone.is_none()
+            && req.bio.is_none()
+            && req.user_role.is_none()
+        {
+            return Err(Status::invalid_argument("Не указаны поля для обновления"));
+        }
+
+        // 2. Создаем чистый QueryBuilder без автоматических разделителей
+        let mut query_builder = QueryBuilder::new("UPDATE users SET ");
+        let mut need_comma = false;
+
+        // 3. Динамически добавляем только те поля, которые пришли
+        if let Some(ref email) = req.email {
+            if need_comma {
+                query_builder.push(", ");
+            }
+            query_builder.push("email = ").push_bind(email);
+            need_comma = true;
+        }
+        if let Some(ref display_name) = req.display_name {
+            if need_comma {
+                query_builder.push(", ");
+            }
+            query_builder
+                .push("display_name = ")
+                .push_bind(display_name);
+            need_comma = true;
+        }
+        if let Some(ref password) = req.password {
+            let hash = hash(password, DEFAULT_COST)
+                .map_err(|e| Status::internal(format!("Ошибка хэширования пароля: {}", e)))?;
+            if need_comma {
+                query_builder.push(", ");
+            }
+            query_builder.push("password_hash = ").push_bind(hash);
+            need_comma = true;
+        }
+        if let Some(is_active) = req.is_active {
+            if need_comma {
+                query_builder.push(", ");
+            }
+            query_builder.push("is_active = ").push_bind(is_active);
+            need_comma = true;
+        }
+        if let Some(ref first_name) = req.first_name {
+            if need_comma {
+                query_builder.push(", ");
+            }
+            query_builder.push("first_name = ").push_bind(first_name);
+            need_comma = true;
+        }
+        if let Some(ref last_name) = req.last_name {
+            if need_comma {
+                query_builder.push(", ");
+            }
+            query_builder.push("last_name = ").push_bind(last_name);
+            need_comma = true;
+        }
+        if let Some(ref avatar_url) = req.avatar_url {
+            if need_comma {
+                query_builder.push(", ");
+            }
+            query_builder.push("avatar_url = ").push_bind(avatar_url);
+            need_comma = true;
+        }
+        if let Some(ref phone) = req.phone {
+            if need_comma {
+                query_builder.push(", ");
+            }
+            query_builder.push("phone = ").push_bind(phone);
+            need_comma = true;
+        }
+        if let Some(ref bio) = req.bio {
+            if need_comma {
+                query_builder.push(", ");
+            }
+            query_builder.push("bio = ").push_bind(bio);
+            need_comma = true;
+        }
+        if let Some(ref user_role) = req.user_role {
+            if need_comma {
+                query_builder.push(", ");
+            }
+            query_builder.push("user_role = ").push_bind(user_role);
+            need_comma = true;
+        }
+
+        // Всегда обновляем дату редактирования профиля
+        if need_comma {
+            query_builder.push(", ");
+        }
+        query_builder.push("edited_at = NOW()");
+
+        // 4. Завершаем запрос условием WHERE и блоком RETURNING
+        query_builder.push(" WHERE id = ").push_bind(user_id);
+        query_builder.push(
+            r#"
+        RETURNING 
+            id, email, display_name, password_hash, 
+            first_name, last_name, avatar_url, phone, bio, 
+            user_role, is_active, created_at, edited_at, deleted_at, last_login_at
+        "#,
+        );
+
+        // 5. Выполняем собранный запрос в БД
+        let row_result = query_builder
+            .build()
+            .fetch_optional(&self.db_pool)
+            .await
+            .map_err(|e| {
+                if let Some(db_err) = e.as_database_error() {
+                    if db_err.is_unique_violation() {
+                        return Status::already_exists("Этот email уже занят другим пользователем");
+                    }
+                }
+                Status::internal(e.to_string())
+            })?;
+
+        // 6. Возвращаем результат или ошибку 404
+        match row_result {
+            Some(row) => Ok(Response::new(UpdateUserResponse {
+                user: Some(Self::row_to_user(row)),
+            })),
+            None => Err(Status::not_found("Пользователь не найден")),
+        }
     }
 }
