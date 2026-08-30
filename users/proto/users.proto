@@ -2,9 +2,6 @@ syntax = "proto3";
 
 package users;
 
-import "google/protobuf/timestamp.proto";
-import "google/protobuf/empty.proto";
-
 service UsersService {
     // rpc AddUser (AddUserRequest) returns (AddUserResponse);
     rpc GetUser (GetUserRequest) returns (GetUserResponse);
@@ -31,10 +28,10 @@ message User {
     string user_role = 10; // customer, master, admin
     bool is_active = 11;    
 
-    google.protobuf.Timestamp created_at = 12;
-    optional google.protobuf.Timestamp edited_at = 13; 
-    optional google.protobuf.Timestamp deleted_at = 14;  
-    optional google.protobuf.Timestamp last_login_at = 15; 
+    int64 created_at = 12;
+    optional int64 edited_at = 13; 
+    optional int64 deleted_at = 14;  
+    optional int64 last_login_at = 15; 
 }
 
 message AddUserRequest {
@@ -90,7 +87,7 @@ message DeleteUserRequest {
 message DeleteUserResponse {
     string id = 1;
     bool success = 2;
-    google.protobuf.Timestamp deleted_at = 3;
+    int64 deleted_at = 3;
 }
 
 message RestoreUserRequest {

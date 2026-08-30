@@ -17,7 +17,6 @@ impl MyUsersService {
         Self { db_pool }
     }
 
-    // Функция конвертации Chrono DateTime в родной Prost Timestamp
     fn to_proto_timestamp(dt: DateTime<Utc>) -> prost_types::Timestamp {
         prost_types::Timestamp {
             seconds: dt.timestamp(),
@@ -31,21 +30,26 @@ impl MyUsersService {
             email: row.get("email"),
             display_name: row.get("display_name"),
             password_hash: row.get("password_hash"),
-            
+
             first_name: row.get::<Option<String>, _>("first_name"),
             last_name: row.get::<Option<String>, _>("last_name"),
             avatar_url: row.get::<Option<String>, _>("avatar_url"),
             phone: row.get::<Option<String>, _>("phone"),
             bio: row.get::<Option<String>, _>("bio"),
-            
+
             user_role: row.get("user_role"),
             is_active: row.get("is_active"),
 
-            // Оборачиваем в Some(), так как сгенерированные поля имеют тип Option<Timestamp>
-            created_at: Some(Self::to_proto_timestamp(row.get::<DateTime<Utc>, _>("created_at"))),
-            edited_at: row.get::<Option<DateTime<Utc>>, _>("edited_at").map(Self::to_proto_timestamp),
-            deleted_at: row.get::<Option<DateTime<Utc>>, _>("deleted_at").map(Self::to_proto_timestamp),
-            last_login_at: row.get::<Option<DateTime<Utc>>, _>("last_login_at").map(Self::to_proto_timestamp),
+        created_at: row.get::<DateTime<Utc>, _>("created_at").timestamp(),
+        
+        edited_at: row.get::<Option<DateTime<Utc>>, _>("edited_at")
+            .map(|dt| dt.timestamp()),
+            
+        deleted_at: row.get::<Option<DateTime<Utc>>, _>("deleted_at")
+            .map(|dt| dt.timestamp()),
+            
+        last_login_at: row.get::<Option<DateTime<Utc>>, _>("last_login_at")
+            .map(|dt| dt.timestamp()),
         }
     }
 }
