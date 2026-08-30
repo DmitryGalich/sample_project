@@ -17,7 +17,7 @@ impl MyUsersService {
         Self { db_pool }
     }
 
-    // Вспомогательная функция для конвертации времени из Chrono в Protobuf Timestamp
+    // Функция конвертации Chrono DateTime в родной Prost Timestamp
     fn to_proto_timestamp(dt: DateTime<Utc>) -> prost_types::Timestamp {
         prost_types::Timestamp {
             seconds: dt.timestamp(),
@@ -32,7 +32,6 @@ impl MyUsersService {
             display_name: row.get("display_name"),
             password_hash: row.get("password_hash"),
             
-            // Поля со свойством optional в proto файле ожидают Option в Rust
             first_name: row.get::<Option<String>, _>("first_name"),
             last_name: row.get::<Option<String>, _>("last_name"),
             avatar_url: row.get::<Option<String>, _>("avatar_url"),
@@ -42,7 +41,7 @@ impl MyUsersService {
             user_role: row.get("user_role"),
             is_active: row.get("is_active"),
 
-            // Обязательные даты заворачиваем в Some(), опциональные маппим через .map
+            // Оборачиваем в Some(), так как сгенерированные поля имеют тип Option<Timestamp>
             created_at: Some(Self::to_proto_timestamp(row.get::<DateTime<Utc>, _>("created_at"))),
             edited_at: row.get::<Option<DateTime<Utc>>, _>("edited_at").map(Self::to_proto_timestamp),
             deleted_at: row.get::<Option<DateTime<Utc>>, _>("deleted_at").map(Self::to_proto_timestamp),
@@ -59,7 +58,6 @@ impl UsersService for MyUsersService {
     ) -> Result<Response<GetUserResponse>, Status> {
         let req = request.into_inner();
 
-        // Парсим UUID из строки запроса. Если формат неверный, возвращаем клиенту ошибку
         let user_id = Uuid::parse_str(&req.id)
             .map_err(|_| Status::invalid_argument("Неверный формат UUID"))?;
 
@@ -74,7 +72,7 @@ impl UsersService for MyUsersService {
             "#,
         )
         .bind(user_id)
-        .fetch_optional(&self.db_pool) // используем fetch_optional, чтобы мягко обработать отсутствие записи
+        .fetch_optional(&self.db_pool)
         .await
         .map_err(|e| Status::internal(e.to_string()))?;
 

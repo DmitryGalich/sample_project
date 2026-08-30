@@ -1,10 +1,6 @@
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-
     tonic_build::configure()
-        .compile(
-            &["proto/users.proto"],
-            &["module_proto"]
-        )?;
-        
+        .build_server(true)
+        .compile_protos(&["proto/users.proto"], &["proto"])?; 
     Ok(())
 }
