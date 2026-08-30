@@ -9,7 +9,8 @@ use uuid::Uuid;
 use crate::users_grpc::users_service_server::UsersService;
 use crate::users_grpc::{
     AddUserRequest, AddUserResponse, DeleteUserRequest, DeleteUserResponse, GetUserRequest,
-    GetUserResponse, UpdateUserRequest, UpdateUserResponse, User,
+    GetUserResponse, RestoreUserRequest, RestoreUserResponse, UpdateUserRequest,
+    UpdateUserResponse, User,
 };
 
 #[derive(Debug)]
@@ -331,6 +332,49 @@ impl UsersService for MyUsersService {
             }
             // Если пользователь не найден или ОН УЖЕ был удален ранее
             None => Err(Status::not_found("Пользователь не найден или уже удален")),
+        }
+    }
+
+    async fn restore_user(
+        &self,
+        request: Request<RestoreUserRequest>,
+    ) -> Result<Response<RestoreUserResponse>, Status> {
+        let req = request.into_inner();
+
+        // 1. Валидируем UUID пользователя
+        let user_id = Uuid::parse_str(&req.id)
+            .map_err(|_| Status::invalid_argument("Неверный формат UUID"))?;
+
+        // 2. Выполняем SQL-запрос восстановления
+        // Сбрасываем deleted_at в NULL и делаем пользователя активным
+        let row_result = sqlx::query(
+            r#"
+            UPDATE users 
+            SET 
+                is_active = true,
+                deleted_at = NULL,
+                edited_at = NOW()
+            WHERE id = $1 AND deleted_at IS NOT NULL
+            RETURNING 
+                id, email, display_name, password_hash, 
+                first_name, last_name, avatar_url, phone, bio, 
+                user_role, is_active, created_at, edited_at, deleted_at, last_login_at
+            "#,
+        )
+        .bind(user_id)
+        .fetch_optional(&self.db_pool)
+        .await
+        .map_err(|e| Status::internal(e.to_string()))?;
+
+        // 3. Формируем ответ
+        match row_result {
+            Some(row) => Ok(Response::new(RestoreUserResponse {
+                user: Some(Self::row_to_user(row)),
+            })),
+            // Если пользователь не найден или он НЕ был удален (deleted_at и так NULL)
+            None => Err(Status::not_found(
+                "Пользователь не найден или не нуждается в восстановлении",
+            )),
         }
     }
 }
