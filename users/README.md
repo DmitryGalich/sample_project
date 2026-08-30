@@ -18,7 +18,13 @@ grpcurl -plaintext \
 sqlx migrate run --database-url $DATABASE_URL
 ```
 
-* Работа с ЬД в консоли
+* PGADMIN
+```
+      PGADMIN_DEFAULT_EMAIL: admin@admin.com
+      PGADMIN_DEFAULT_PASSWORD: admin
+```
+
+* Работа с БД в консоли
 
 ```
 psql -U admin -d users_db
@@ -26,7 +32,10 @@ psql -U admin -d users_db
 \dt — показать список всех таблиц.
 \l — показать список всех баз данных.
 \d имя_таблицы — посмотреть структуру конкретной таблицы (колонки, типы данных).
+
+// НЕ ЗАБЫТЬ ;
 SELECT * FROM имя_таблицы; — сделать SQL-запрос (обязательно ставьте ; в конце).
+
 \q — выйти из psql обратно в консоль хоста.
 
 ```
