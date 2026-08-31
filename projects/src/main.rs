@@ -3,14 +3,14 @@ use sqlx::PgPool;
 use std::env;
 use tonic::transport::Server;
 
-pub mod users_grpc {
-    include!("generated/users.rs");
+pub mod projects_grpc {
+    include!("generated/projects.rs");
 }
 
 mod module_service;
 
-use module_service::MyUsersService;
-use users_grpc::users_service_server::UsersServiceServer;
+use module_service::MyProjectsService;
+use projects_grpc::projects_service_server::ProjectsServiceServer;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -38,7 +38,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Run...");
 
     Server::builder()
-        .add_service(UsersServiceServer::new(MyUsersService::new(db_pool)))
+        .add_service(ProjectsServiceServer::new(MyProjectsService::new(db_pool)))
         .serve(exposed_addr)
         .await?;
 
