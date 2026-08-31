@@ -15,8 +15,7 @@ grpcurl -plaintext \
 
 * Применение миграций
 ```
-sqlx migrate run --database-url $DATABASE_URL
-```
+ £ #‹```
 
 * PGADMIN
 ```

@@ -17,20 +17,19 @@ services:
   users:
     build:
       context: ./users
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile.prod
     container_name: users
     depends_on:
-      - users_db
+      users_db:
+        condition: service_healthy
     expose:
-        - "50051"
+      - "50051"
     environment:
       - EXPOSED_ADDR=0.0.0.0:50051
       - DATABASE_URL=postgres://admin:admin@users_db:5432/users_db
-    volumes:
-      - ./users:/workspace/users:cached
     restart: unless-stopped
     networks:
-        - internal_network
+      - internal_network
 
   users_db:
     image: postgres:16-alpine
@@ -43,6 +42,11 @@ services:
       - "5432"
     volumes:
       - users_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U admin -d users_db"]
+      interval: 3s
+      timeout: 3s
+      retries: 5
     restart: unless-stopped
     networks:
       - internal_network
@@ -56,7 +60,8 @@ services:
     ports:
       - "5050:80"
     depends_on:
-      - users_db
+      users_db:
+        condition: service_healthy
     restart: unless-stopped
     networks:
       - internal_network

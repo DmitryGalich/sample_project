@@ -4,7 +4,7 @@ use std::env;
 use tonic::transport::Server;
 
 pub mod users_grpc {
-    tonic::include_proto!("users");
+    include!("generated/users.rs"); // или users.rs в зависимости от того, как назовет tonic
 }
 
 mod module_service;
