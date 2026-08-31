@@ -1,0 +1,56 @@
+syntax = "proto3";
+
+package projects;
+
+service ProjectsService {
+    rpc CreateProject (CreateProjectRequest) returns (CreateProjectResponse);
+    rpc GetProject (GetProjectRequest) returns (GetProjectResponse);
+}
+
+message Project {
+    string id = 1;
+    string owner_id = 2;
+
+    string title = 3;
+    optional string description = 4;
+
+    repeated string team_members = 5;
+
+    int64 created_at = 6;
+    optional int64 deadline = 7;
+
+    optional int64 edited_at = 8; 
+    optional int64 deleted_at = 9;  
+
+    string status = 10;
+}
+
+message CreateProjectRequest {
+    string id = 1;
+    string owner_id = 2;
+
+    string title = 3;
+    optional string description = 4;
+
+    repeated string team_members = 5;
+
+    int64 created_at = 6;
+    optional int64 deadline = 7;
+
+    optional int64 edited_at = 8; 
+    optional int64 deleted_at = 9;  
+
+    string status = 10;
+}
+
+message CreateProjectResponse {
+    Project project = 1;
+}
+
+message GetProjectRequest {
+    string id = 1;
+}
+
+message GetProjectResponse {
+    Project project = 1;
+}
