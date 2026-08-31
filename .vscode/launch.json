@@ -2,7 +2,7 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Debug users",
+            "name": "Debug projects",
             "type": "lldb",
             "request": "launch",
             "cargo": {
@@ -12,10 +12,10 @@
                 "filter": {
                     "kind": "bin"
                 },
-                "cwd": "${workspaceFolder}/users"
+                "cwd": "${workspaceFolder}/projects"
             },
             "args": [],
-            "cwd": "${workspaceFolder}/users"
+            "cwd": "${workspaceFolder}/projects"
         }
     ]
 }
