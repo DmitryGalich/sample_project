@@ -18,6 +18,7 @@ services:
     build:
       context: ./users
       dockerfile: Dockerfile.prod
+      # dockerfile: Dockerfile.dev
     container_name: users
     depends_on:
       users_db:
