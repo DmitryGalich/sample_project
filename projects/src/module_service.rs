@@ -8,7 +8,9 @@ use uuid::Uuid;
 use crate::projects_grpc::projects_service_server::ProjectsService;
 use crate::projects_grpc::{
     CreateProjectRequest, CreateProjectResponse, DeleteProjectRequest, DeleteProjectResponse,
-    GetProjectRequest, GetProjectResponse, Project, UpdateProjectRequest, UpdateProjectResponse, RestoreProjectRequest, RestoreProjectResponse,
+    GetProjectRequest, GetProjectResponse, HardDeleteProjectRequest, HardDeleteProjectResponse,
+    Project, RestoreProjectRequest, RestoreProjectResponse, UpdateProjectRequest,
+    UpdateProjectResponse,
 };
 
 #[derive(Debug)]
@@ -402,5 +404,68 @@ impl ProjectsService for MyProjectsService {
         }
     }
 
+    async fn hard_delete_project(
+        &self,
+        request: Request<HardDeleteProjectRequest>,
+    ) -> Result<Response<HardDeleteProjectResponse>, Status> {
+        let req = request.into_inner();
 
+        // 1. Валидируем UUID проекта
+        let project_id = Uuid::parse_str(&req.id)
+            .map_err(|_| Status::invalid_argument("Неверный формат ID проекта (ожидался UUID)"))?;
+
+        // 2. Открываем транзакцию, так как нужно удалить данные из двух связанных таблиц
+        let mut tx = self
+            .db_pool
+            .begin()
+            .await
+            .map_err(|e| Status::internal(format!("Ошибка базы данных: {}", e)))?;
+
+        // 3. Сначала удаляем всех участников команды этого проекта (очистка связей)
+        sqlx::query(
+            r#"
+            DELETE FROM project_team_members 
+            WHERE project_id = $1
+            "#,
+        )
+        .bind(project_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| Status::internal(format!("Не удалось удалить участников проекта: {}", e)))?;
+
+        // 4. Выполняем физическое удаление самого проекта из таблицы projects
+        let row_result = sqlx::query(
+            r#"
+            DELETE FROM projects 
+            WHERE id = $1
+            RETURNING id
+            "#,
+        )
+        .bind(project_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(|e| Status::internal(format!("Не удалось удалить проект: {}", e)))?;
+
+        // 5. Проверяем результат удаления проекта
+        match row_result {
+            Some(row) => {
+                // Если проект успешно удален, фиксируем транзакцию
+                tx.commit().await.map_err(|e| {
+                    Status::internal(format!("Не удалось подтвердить транзакцию: {}", e))
+                })?;
+
+                let deleted_id: Uuid = row.get("id");
+                Ok(Response::new(HardDeleteProjectResponse {
+                    id: deleted_id.to_string(),
+                    success: true,
+                }))
+            }
+            // Если проекта с таким ID вообще не было в базе данных
+            None => {
+                // Откатывать транзакцию явно не обязательно (sqlx сделает Drop),
+                // но возвращаем ошибку, что объект не найден
+                Err(Status::not_found("Проект не найден"))
+            }
+        }
+    }
 }

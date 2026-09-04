@@ -8,7 +8,7 @@ service ProjectsService {
     rpc UpdateProject (UpdateProjectRequest) returns (UpdateProjectResponse);
     rpc DeleteProject (DeleteProjectRequest) returns (DeleteProjectResponse);
     rpc RestoreProject (RestoreProjectRequest) returns (RestoreProjectResponse);
-    // rpc HardDeleteProject (HardDeleteProjectRequest) returns (HardDeleteProjectResponse);
+    rpc HardDeleteProject (HardDeleteProjectRequest) returns (HardDeleteProjectResponse);
 }
 
 message Project {
@@ -87,11 +87,11 @@ message RestoreProjectResponse {
     Project project = 1;
 }
 
-// message HardDeleteProjectRequest {
-//     string id = 1;
-// }
+message HardDeleteProjectRequest {
+    string id = 1;
+}
 
-// message HardDeleteProjectResponse {
-//     string id = 1;
-//     bool success = 2;
-// }
+message HardDeleteProjectResponse {
+    string id = 1;
+    bool success = 2;
+}
