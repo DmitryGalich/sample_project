@@ -8,7 +8,7 @@ use uuid::Uuid;
 use crate::projects_grpc::projects_service_server::ProjectsService;
 use crate::projects_grpc::{
     CreateProjectRequest, CreateProjectResponse, DeleteProjectRequest, DeleteProjectResponse,
-    GetProjectRequest, GetProjectResponse, Project, UpdateProjectRequest, UpdateProjectResponse,
+    GetProjectRequest, GetProjectResponse, Project, UpdateProjectRequest, UpdateProjectResponse, RestoreProjectRequest, RestoreProjectResponse,
 };
 
 #[derive(Debug)]
@@ -351,5 +351,56 @@ impl ProjectsService for MyProjectsService {
             None => Err(Status::not_found("Проект не найден или уже удален")),
         }
     }
+
+    async fn restore_project(
+        &self,
+        request: Request<RestoreProjectRequest>,
+    ) -> Result<Response<RestoreProjectResponse>, Status> {
+        let req = request.into_inner();
+
+        // 1. Валидируем UUID проекта
+        let project_id = Uuid::parse_str(&req.id)
+            .map_err(|_| Status::invalid_argument("Неверный формат ID проекта (ожидался UUID)"))?;
+
+        // 2. Выполняем SQL-запрос восстановления проекта
+        // Сбрасываем deleted_at в NULL, обновляем edited_at и собираем участников через LEFT JOIN
+        let row_result = sqlx::query(
+            r#"
+            WITH updated_project AS (
+                UPDATE projects 
+                SET 
+                    deleted_at = NULL,
+                    edited_at = NOW()
+                WHERE id = $1 AND deleted_at IS NOT NULL
+                RETURNING id, owner_id, title, description, created_at, deadline, edited_at, deleted_at, status
+            )
+            SELECT 
+                p.*,
+                COALESCE(
+                    ARRAY_AGG(ptm.user_id) FILTER (WHERE ptm.user_id IS NOT NULL), 
+                    '{}'
+                ) as team_members
+            FROM updated_project p
+            LEFT JOIN project_team_members ptm ON p.id = ptm.project_id
+            GROUP BY p.id, p.owner_id, p.title, p.description, p.created_at, p.deadline, p.edited_at, p.deleted_at, p.status
+            "#,
+        )
+        .bind(project_id)
+        .fetch_optional(&self.db_pool)
+        .await
+        .map_err(|e| Status::internal(format!("Ошибка базы данных: {}", e)))?;
+
+        // 3. Формируем ответ
+        match row_result {
+            Some(row) => Ok(Response::new(RestoreProjectResponse {
+                project: Some(Self::row_to_project(&row)),
+            })),
+            // Если проект не найден или он НЕ был удален (deleted_at и так был NULL)
+            None => Err(Status::not_found(
+                "Проект не найден или не нуждается в восстановлении",
+            )),
+        }
+    }
+
 
 }

@@ -7,7 +7,7 @@ service ProjectsService {
     rpc GetProject (GetProjectRequest) returns (GetProjectResponse);
     rpc UpdateProject (UpdateProjectRequest) returns (UpdateProjectResponse);
     rpc DeleteProject (DeleteProjectRequest) returns (DeleteProjectResponse);
-    // rpc RestoreProject (RestoreProjectRequest) returns (RestoreProjectResponse);
+    rpc RestoreProject (RestoreProjectRequest) returns (RestoreProjectResponse);
     // rpc HardDeleteProject (HardDeleteProjectRequest) returns (HardDeleteProjectResponse);
 }
 
@@ -79,13 +79,13 @@ message DeleteProjectResponse {
     int64 deleted_at = 3;
 }
 
-// message RestoreProjectRequest {
-//     string id = 1;
-// }
+message RestoreProjectRequest {
+    string id = 1;
+}
 
-// message RestoreProjectResponse {
-//     Project project = 1;
-// }
+message RestoreProjectResponse {
+    Project project = 1;
+}
 
 // message HardDeleteProjectRequest {
 //     string id = 1;
