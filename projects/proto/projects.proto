@@ -5,6 +5,10 @@ package projects;
 service ProjectsService {
     rpc CreateProject (CreateProjectRequest) returns (CreateProjectResponse);
     rpc GetProject (GetProjectRequest) returns (GetProjectResponse);
+    rpc UpdateProject (UpdateProjectRequest) returns (UpdateProjectResponse);
+    // rpc DeleteProject (DeleteProjectRequest) returns (DeleteProjectResponse);
+    // rpc RestoreProject (RestoreProjectRequest) returns (RestoreProjectResponse);
+    // rpc HardDeleteProject (HardDeleteProjectRequest) returns (HardDeleteProjectResponse);
 }
 
 message Project {
@@ -49,3 +53,45 @@ message GetProjectRequest {
 message GetProjectResponse {
     Project project = 1;
 }
+
+message UpdateProjectRequest {
+    string id = 1; 
+    
+    optional string owner_id = 2;
+    optional string title = 3;
+    optional string description = 4;
+    optional int64 deadline = 5;
+    optional string status = 6;
+}
+
+message UpdateProjectResponse {
+    Project project = 1;
+}
+
+// message DeleteProjectRequest {
+//     string id = 1;
+//     optional string reason = 2;
+// }
+
+// message DeleteProjectResponse {
+//     string id = 1;
+//     bool success = 2;
+//     int64 deleted_at = 3;
+// }
+
+// message RestoreProjectRequest {
+//     string id = 1;
+// }
+
+// message RestoreProjectResponse {
+//     Project project = 1;
+// }
+
+// message HardDeleteProjectRequest {
+//     string id = 1;
+// }
+
+// message HardDeleteProjectResponse {
+//     string id = 1;
+//     bool success = 2;
+// }

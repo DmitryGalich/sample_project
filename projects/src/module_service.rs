@@ -1,14 +1,14 @@
-use std::str::FromStr;
 use chrono::{DateTime, Utc};
 use sqlx::postgres::PgRow;
 use sqlx::{PgPool, Row};
+use std::str::FromStr;
 use tonic::{Request, Response, Status};
 use uuid::Uuid;
 
 use crate::projects_grpc::projects_service_server::ProjectsService;
 use crate::projects_grpc::{
-    Project, GetProjectRequest,
-    GetProjectResponse,CreateProjectRequest, CreateProjectResponse
+    CreateProjectRequest, CreateProjectResponse, GetProjectRequest, GetProjectResponse, Project,
+    UpdateProjectRequest, UpdateProjectResponse,
 };
 
 #[derive(Debug)]
@@ -21,7 +21,7 @@ impl MyProjectsService {
         Self { db_pool }
     }
 
-    fn row_to_project(row:& PgRow) -> Project {
+    fn row_to_project(row: &PgRow) -> Project {
         let member_uuids: Vec<Uuid> = row.try_get("team_members").unwrap_or_default();
         let team_members = member_uuids.into_iter().map(|id| id.to_string()).collect();
 
@@ -30,7 +30,7 @@ impl MyProjectsService {
             owner_id: row.get::<Uuid, _>("owner_id").to_string(),
             title: row.get("title"),
             description: row.get::<Option<String>, _>("description"),
-            
+
             deadline: row
                 .get::<Option<DateTime<Utc>>, _>("deadline")
                 .map(|dt| dt.timestamp()),
@@ -46,8 +46,8 @@ impl MyProjectsService {
                 .map(|dt| dt.timestamp()),
 
             status: row.get("status"),
-            
-            team_members, 
+
+            team_members,
         }
     }
 }
@@ -58,9 +58,7 @@ impl ProjectsService for MyProjectsService {
         &self,
         request: Request<GetProjectRequest>,
     ) -> Result<Response<GetProjectResponse>, Status> {
-        
-
-  let req = request.into_inner();
+        let req = request.into_inner();
 
         // 1. Валидация входного UUID проекта
         let project_id = Uuid::from_str(&req.id)
@@ -117,15 +115,16 @@ impl ProjectsService for MyProjectsService {
         // Валидация UUID участников команды
         let mut team_member_uuids = Vec::new();
         for member_id in &req.team_members {
-            let member_uuid = Uuid::from_str(member_id)
-                .map_err(|_| Status::invalid_argument(format!("Неверный формат ID участника: {}", member_id)))?;
+            let member_uuid = Uuid::from_str(member_id).map_err(|_| {
+                Status::invalid_argument(format!("Неверный формат ID участника: {}", member_id))
+            })?;
             team_member_uuids.push(member_uuid);
         }
 
         // Парсинг опционального дедлайна из i64 (Unix timestamp) в DateTime<Utc>
-        let deadline_dt = req.deadline.and_then(|ts| {
-            DateTime::from_timestamp(ts, 0).map(|dt| dt.with_timezone(&Utc))
-        });
+        let deadline_dt = req
+            .deadline
+            .and_then(|ts| DateTime::from_timestamp(ts, 0).map(|dt| dt.with_timezone(&Utc)));
 
         // Устанавливаем дефолтный статус, если клиент прислал пустую строку
         let status = if req.status.trim().is_empty() {
@@ -135,7 +134,10 @@ impl ProjectsService for MyProjectsService {
         };
 
         // 2. Открываем транзакцию в Postgres
-        let mut tx = self.db_pool.begin().await
+        let mut tx = self
+            .db_pool
+            .begin()
+            .await
             .map_err(|e| Status::internal(format!("Ошибка базы данных: {}", e)))?;
 
         // 3. Вставляем проект в таблицу `projects`
@@ -170,11 +172,14 @@ impl ProjectsService for MyProjectsService {
             .bind(member_uuid)
             .execute(&mut *tx)
             .await
-            .map_err(|e| Status::internal(format!("Не удалось добавить участника команды: {}", e)))?;
+            .map_err(|e| {
+                Status::internal(format!("Не удалось добавить участника команды: {}", e))
+            })?;
         }
 
         // Подтверждаем транзакцию
-        tx.commit().await
+        tx.commit()
+            .await
             .map_err(|e| Status::internal(format!("Не удалось подтвердить транзакцию: {}", e)))?;
 
         // 5. Формируем финальный PgRow для маппинга
@@ -198,6 +203,106 @@ impl ProjectsService for MyProjectsService {
 
         // 6. Возвращаем gRPC ответ
         Ok(Response::new(CreateProjectResponse {
+            project: Some(Self::row_to_project(&final_row)),
+        }))
+    }
+
+    async fn update_project(
+        &self,
+        request: Request<UpdateProjectRequest>,
+    ) -> Result<Response<UpdateProjectResponse>, Status> {
+        let req = request.into_inner();
+
+        // 1. Валидация основного ID проекта
+        let project_id = Uuid::from_str(&req.id)
+            .map_err(|_| Status::invalid_argument("Неверный формат ID проекта (ожидался UUID)"))?;
+
+        // 2. Валидация опционального owner_id (если передан)
+        let owner_uuid = if let Some(ref oid) = req.owner_id {
+            Some(Uuid::from_str(oid).map_err(|_| {
+                Status::invalid_argument("Неверный формат owner_id (ожидался UUID)")
+            })?)
+        } else {
+            None
+        };
+
+        // 3. Парсинг опционального дедлайна из i64 (Unix timestamp) в DateTime<Utc>
+        let deadline_dt = req
+            .deadline
+            .and_then(|ts| DateTime::from_timestamp(ts, 0).map(|dt| dt.with_timezone(&Utc)));
+
+        // 4. Открываем транзакцию
+        let mut tx = self
+            .db_pool
+            .begin()
+            .await
+            .map_err(|e| Status::internal(format!("Ошибка базы данных: {}", e)))?;
+
+        // 5. Динамическое обновление проекта с помощью COALESCE
+        // Обновляем edited_at на текущее время (NOW()) только если проект существует и не удален
+        let update_result = sqlx::query(
+            r#"
+            UPDATE projects
+            SET 
+                owner_id = COALESCE($1, owner_id),
+                title = COALESCE($2, title),
+                description = COALESCE($3, description),
+                deadline = COALESCE($4, deadline),
+                status = COALESCE($5, status),
+                edited_at = NOW()
+            WHERE id = $6 AND deleted_at IS NULL
+            "#,
+        )
+        .bind(owner_uuid)
+        .bind(&req.title)
+        .bind(&req.description)
+        .bind(deadline_dt)
+        .bind(&req.status)
+        .bind(project_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| Status::internal(format!("Не удалось обновить проект: {}", e)))?;
+
+        // Если ни одна строка не была затронута, значит проект не найден или мягко удален
+        if update_result.rows_affected() == 0 {
+            return Err(Status::not_found("Проект не найден или был удален"));
+        }
+
+        // Подтверждаем транзакцию
+        tx.commit()
+            .await
+            .map_err(|e| Status::internal(format!("Не удалось подтвердить транзакцию: {}", e)))?;
+
+        // 6. Получаем финальное состояние проекта с агрегацией участников команды
+        let final_row = sqlx::query(
+            r#"
+            SELECT 
+                p.id, 
+                p.owner_id, 
+                p.title, 
+                p.description, 
+                p.created_at, 
+                p.deadline, 
+                p.edited_at, 
+                p.deleted_at, 
+                p.status,
+                COALESCE(
+                    ARRAY_AGG(ptm.user_id) FILTER (WHERE ptm.user_id IS NOT NULL), 
+                    '{}'
+                ) as team_members
+            FROM projects p
+            LEFT JOIN project_team_members ptm ON p.id = ptm.project_id
+            WHERE p.id = $1
+            GROUP BY p.id
+            "#,
+        )
+        .bind(project_id)
+        .fetch_one(&self.db_pool)
+        .await
+        .map_err(|e| Status::internal(format!("Ошибка получения обновленного проекта: {}", e)))?;
+
+        // 7. Возвращаем gRPC ответ
+        Ok(Response::new(UpdateProjectResponse {
             project: Some(Self::row_to_project(&final_row)),
         }))
     }
