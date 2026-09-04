@@ -9,6 +9,8 @@ service ProjectsService {
     rpc DeleteProject (DeleteProjectRequest) returns (DeleteProjectResponse);
     rpc RestoreProject (RestoreProjectRequest) returns (RestoreProjectResponse);
     rpc HardDeleteProject (HardDeleteProjectRequest) returns (HardDeleteProjectResponse);
+
+    rpc GetUserProjects (GetUserProjectsRequest) returns (GetUserProjectsResponse);
 }
 
 message Project {
@@ -94,4 +96,14 @@ message HardDeleteProjectRequest {
 message HardDeleteProjectResponse {
     string id = 1;
     bool success = 2;
+}
+
+message GetUserProjectsRequest {
+    string user_id = 1;
+    
+    optional string status = 2; 
+}
+
+message GetUserProjectsResponse {
+    repeated Project projects = 1;
 }

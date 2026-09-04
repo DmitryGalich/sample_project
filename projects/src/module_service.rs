@@ -10,7 +10,7 @@ use crate::projects_grpc::{
     CreateProjectRequest, CreateProjectResponse, DeleteProjectRequest, DeleteProjectResponse,
     GetProjectRequest, GetProjectResponse, HardDeleteProjectRequest, HardDeleteProjectResponse,
     Project, RestoreProjectRequest, RestoreProjectResponse, UpdateProjectRequest,
-    UpdateProjectResponse,
+    UpdateProjectResponse, GetUserProjectsRequest, GetUserProjectsResponse
 };
 
 #[derive(Debug)]
@@ -468,4 +468,70 @@ impl ProjectsService for MyProjectsService {
             }
         }
     }
+
+        async fn get_user_projects(
+        &self,
+        request: Request<GetUserProjectsRequest>,
+    ) -> Result<Response<GetUserProjectsResponse>, Status> {
+        let req = request.into_inner();
+
+        // 1. Валидируем UUID пользователя
+        let user_id = Uuid::parse_str(&req.user_id)
+            .map_err(|_| Status::invalid_argument("Неверный формат user_id (ожидался UUID)"))?;
+
+        // 2. Обрабатываем опциональный фильтр по статусу
+        let status_filter = req.status.and_then(|s| {
+            if s.trim().is_empty() {
+                None
+            } else {
+                Some(s)
+            }
+        });
+
+        // 3. Выполняем SQL-запрос с агрегацией участников
+        // Используем подзапрос в WHERE, чтобы не отсекать других участников проекта при фильтрации
+        let rows = sqlx::query(
+            r#"
+            SELECT 
+                p.id, 
+                p.owner_id, 
+                p.title, 
+                p.description, 
+                p.created_at, 
+                p.deadline, 
+                p.edited_at, 
+                p.deleted_at, 
+                p.status,
+                COALESCE(
+                    ARRAY_AGG(ptm.user_id) FILTER (WHERE ptm.user_id IS NOT NULL), 
+                    '{}'
+                ) as team_members
+            FROM projects p
+            LEFT JOIN project_team_members ptm ON p.id = ptm.project_id
+            WHERE p.deleted_at IS NULL 
+              AND (p.status = $1 OR $1 IS NULL)
+              AND (
+                  p.owner_id = $2 
+                  OR p.id IN (SELECT project_id FROM project_team_members WHERE user_id = $2)
+              )
+            GROUP BY p.id
+            ORDER BY p.created_at DESC
+            "#,
+        )
+        .bind(status_filter)
+        .bind(user_id)
+        .fetch_all(&self.db_pool)
+        .await
+        .map_err(|e| Status::internal(format!("Ошибка получения проектов пользователя: {}", e)))?;
+
+        // 4. Маппим строки БД в gRPC-структуру Project через ваш row_to_project
+        let projects = rows
+            .iter()
+            .map(|row| Self::row_to_project(row))
+            .collect();
+
+        // 5. Возвращаем ответ (если проектов нет, вернется корректный пустой список)
+        Ok(Response::new(GetUserProjectsResponse { projects }))
+    }
+
 }
