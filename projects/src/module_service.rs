@@ -7,8 +7,8 @@ use uuid::Uuid;
 
 use crate::projects_grpc::projects_service_server::ProjectsService;
 use crate::projects_grpc::{
-    CreateProjectRequest, CreateProjectResponse, GetProjectRequest, GetProjectResponse, Project,
-    UpdateProjectRequest, UpdateProjectResponse,
+    CreateProjectRequest, CreateProjectResponse, DeleteProjectRequest, DeleteProjectResponse,
+    GetProjectRequest, GetProjectResponse, Project, UpdateProjectRequest, UpdateProjectResponse,
 };
 
 #[derive(Debug)]
@@ -306,4 +306,50 @@ impl ProjectsService for MyProjectsService {
             project: Some(Self::row_to_project(&final_row)),
         }))
     }
+
+    async fn delete_project(
+        &self,
+        request: Request<DeleteProjectRequest>,
+    ) -> Result<Response<DeleteProjectResponse>, Status> {
+        let req = request.into_inner();
+
+        // 1. Валидируем UUID проекта
+        let project_id = Uuid::parse_str(&req.id)
+            .map_err(|_| Status::invalid_argument("Неверный формат ID проекта (ожидался UUID)"))?;
+
+        // 2. Выполняем Soft Delete запрос в базу данных
+        // Фиксируем время удаления через NOW() и возвращаем измененную строку
+        let row_result = sqlx::query(
+            r#"
+            UPDATE projects 
+            SET 
+                deleted_at = NOW()
+            WHERE id = $1 AND deleted_at IS NULL
+            RETURNING id, deleted_at
+            "#,
+        )
+        .bind(project_id)
+        .fetch_optional(&self.db_pool)
+        .await
+        .map_err(|e| Status::internal(format!("Ошибка базы данных: {}", e)))?;
+
+        // 3. Формируем ответ клиенту
+        match row_result {
+            Some(row) => {
+                let id: Uuid = row.get("id");
+                // Достаем записанную дату из БД и конвертируем в Unix Timestamp (секунды)
+                let deleted_at_dt: DateTime<Utc> = row.get("deleted_at");
+                let deleted_at_ts = deleted_at_dt.timestamp();
+
+                Ok(Response::new(DeleteProjectResponse {
+                    id: id.to_string(),
+                    success: true,
+                    deleted_at: deleted_at_ts,
+                }))
+            }
+            // Если проект не найден или ОН УЖЕ был удален ранее
+            None => Err(Status::not_found("Проект не найден или уже удален")),
+        }
+    }
+
 }
