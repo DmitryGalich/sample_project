@@ -11,7 +11,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     tonic_build::configure()
         .out_dir(out_dir) 
-        .compile_protos(&["proto/users.proto"], &["proto"])?;
+        .compile_protos(&["proto/projects.proto"], &["proto"])?;
         
     Ok(())
 }

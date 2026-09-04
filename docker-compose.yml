@@ -9,49 +9,49 @@ services:
     ports:
       - "8080:8080"
     depends_on:
-      # - users
+      - users
       - projects
     restart: unless-stopped
     networks:
       - internal_network
 
-  # users:
-  #   build:
-  #     context: ./users
-  #     dockerfile: Dockerfile.prod
-  #     # dockerfile: Dockerfile.dev
-  #   container_name: users
-  #   depends_on:
-  #     users_db:
-  #       condition: service_healthy
-  #   expose:
-  #     - "50051"
-  #   environment:
-  #     - EXPOSED_ADDR=0.0.0.0:50051
-  #     - DATABASE_URL=postgres://admin:admin@users_db:5432/users_db
-  #   restart: unless-stopped
-  #   networks:
-  #     - internal_network
+  users:
+    build:
+      context: ./users
+      dockerfile: Dockerfile.prod
+      # dockerfile: Dockerfile.dev
+    container_name: users
+    depends_on:
+      users_db:
+        condition: service_healthy
+    expose:
+      - "50051"
+    environment:
+      - EXPOSED_ADDR=0.0.0.0:50051
+      - DATABASE_URL=postgres://admin:admin@users_db:5432/users_db
+    restart: unless-stopped
+    networks:
+      - internal_network
 
-  # users_db:
-  #   image: postgres:16-alpine
-  #   container_name: users_db
-  #   environment:
-  #     POSTGRES_USER: admin
-  #     POSTGRES_PASSWORD: admin
-  #     POSTGRES_DB: users_db
-  #   expose:
-  #     - "5432"
-  #   volumes:
-  #     - users_db_data:/var/lib/postgresql/data
-  #   healthcheck:
-  #     test: ["CMD-SHELL", "pg_isready -U admin -d users_db"]
-  #     interval: 3s
-  #     timeout: 3s
-  #     retries: 5
-  #   restart: unless-stopped
-  #   networks:
-  #     - internal_network
+  users_db:
+    image: postgres:16-alpine
+    container_name: users_db
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: admin
+      POSTGRES_DB: users_db
+    expose:
+      - "5432"
+    volumes:
+      - users_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U admin -d users_db"]
+      interval: 3s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - internal_network
 
   projects:
     build:
@@ -59,9 +59,9 @@ services:
       # dockerfile: Dockerfile.prod
       dockerfile: Dockerfile.dev
     container_name: projects
-    # depends_on:
-      # users_db:
-        # condition: service_healthy
+    depends_on:
+      users_db:
+        condition: service_healthy
     expose:
       - "50052"
     environment:
@@ -100,8 +100,8 @@ services:
     ports:
       - "5050:80"
     depends_on:
-      # users_db:
-        # condition: service_healthy
+      users_db:
+        condition: service_healthy
       projects_db:
         condition: service_healthy
     restart: unless-stopped
@@ -109,7 +109,7 @@ services:
       - internal_network
 
 volumes:
-  # users_db_data:
+  users_db_data:
   projects_db_data:
 
 networks:

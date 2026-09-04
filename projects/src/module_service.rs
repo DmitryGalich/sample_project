@@ -1,13 +1,12 @@
-use bcrypt::{hash, DEFAULT_COST};
+use std::str::FromStr;
 use chrono::{DateTime, Utc};
 use sqlx::postgres::PgRow;
-use sqlx::QueryBuilder;
 use sqlx::{PgPool, Row};
 use tonic::{Request, Response, Status};
 use uuid::Uuid;
 
-use crate::users_grpc::users_service_server::ProjectsService;
-use crate::users_grpc::{
+use crate::projects_grpc::projects_service_server::ProjectsService;
+use crate::projects_grpc::{
     Project, GetProjectRequest,
     GetProjectResponse,CreateProjectRequest, CreateProjectResponse
 };
@@ -22,7 +21,7 @@ impl MyProjectsService {
         Self { db_pool }
     }
 
-    fn row_to_project(row: PgRow) -> Project {
+    fn row_to_project(row:& PgRow) -> Project {
         let member_uuids: Vec<Uuid> = row.try_get("team_members").unwrap_or_default();
         let team_members = member_uuids.into_iter().map(|id| id.to_string()).collect();
 
@@ -57,8 +56,8 @@ impl MyProjectsService {
 impl ProjectsService for MyProjectsService {
     async fn get_project(
         &self,
-        request: Request<GetUserRequest>,
-    ) -> Result<Response<GetUserResponse>, Status> {
+        request: Request<GetProjectRequest>,
+    ) -> Result<Response<GetProjectResponse>, Status> {
         
 
   let req = request.into_inner();
