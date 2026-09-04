@@ -2,17 +2,32 @@
 
 ## Development
 
-* Run all except container in vscode
+### Steps if creating new service
+
+* Create backend container
+* Create db container
+* Create instance in Nginx
+* Create proto file
+* Create migrations 
+* [Apply migrations](#apply-migrations)
+* [Check in terminal inside database container](#simple-work-with-db)
+* [Check db with pgadmin](#pgadmin)
+* Make request handling functions in service
+* [Test service handling functions with Postman](#postman-address-example)
+
+### Cookbook
+
+#### Run all except container in vscode
 ```
 docker compose up --scale <excluded_service_name>=0
 ```
 
-* Пример адреса в Postman
+#### Postman address example
 ```
 localhost:8080 | UserService/GetAllUsers
 ```
 
-* Пример проверки метода через grpcurl
+#### Example of checking grpc function by grpcurl
 ```
 grpcurl -plaintext \
   -import-path /Users/dmitry/Projects/sample_project/users/proto \
@@ -22,29 +37,32 @@ grpcurl -plaintext \
   users.UsersService/AddUser
 ```
 
-* Применение миграций
+#### Apply migrations
 ```
 sqlx migrate run --database-url $DATABASE_URL
 ```
 
-* PGADMIN
+#### PGADMIN
 ```
       PGADMIN_DEFAULT_EMAIL: admin@admin.com
       PGADMIN_DEFAULT_PASSWORD: admin
 ```
 
-* Работа с БД в консоли
+#### Simple work with db 
 
 ```
 psql -U admin -d users_db
 
-\dt — показать список всех таблиц.
-\l — показать список всех баз данных.
-\d имя_таблицы — посмотреть структуру конкретной таблицы (колонки, типы данных).
+\dt — all tables
+\l — all databases
+\d table_title — db structure
 
-// НЕ ЗАБЫТЬ ;
-SELECT * FROM имя_таблицы; — сделать SQL-запрос (обязательно ставьте ; в конце).
+// DO NOT FORGET ;
 
-\q — выйти из psql обратно в консоль хоста.
+SELECT * FROM table_title; — request example;
+
+// DO NOT FORGET ;
+
+\q — quit
 
 ```
