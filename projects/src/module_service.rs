@@ -8,9 +8,11 @@ use uuid::Uuid;
 use crate::projects_grpc::projects_service_server::ProjectsService;
 use crate::projects_grpc::{
     CreateProjectRequest, CreateProjectResponse, DeleteProjectRequest, DeleteProjectResponse,
-    GetProjectRequest, GetProjectResponse, HardDeleteProjectRequest, HardDeleteProjectResponse,
-    Project, RestoreProjectRequest, RestoreProjectResponse, UpdateProjectRequest,
-    UpdateProjectResponse, GetUserProjectsRequest, GetUserProjectsResponse
+    GetProjectRequest, GetProjectResponse, GetUserProjectsRequest, GetUserProjectsResponse,
+    HardDeleteProjectRequest, HardDeleteProjectResponse, Project, RestoreProjectRequest,
+    RestoreProjectResponse, UpdateProjectRequest, UpdateProjectResponse,
+    RemoveTeamMemberRequest, RemoveTeamMemberResponse,
+    AddTeamMemberRequest, AddTeamMemberResponse,
 };
 
 #[derive(Debug)]
@@ -414,26 +416,8 @@ impl ProjectsService for MyProjectsService {
         let project_id = Uuid::parse_str(&req.id)
             .map_err(|_| Status::invalid_argument("Неверный формат ID проекта (ожидался UUID)"))?;
 
-        // 2. Открываем транзакцию, так как нужно удалить данные из двух связанных таблиц
-        let mut tx = self
-            .db_pool
-            .begin()
-            .await
-            .map_err(|e| Status::internal(format!("Ошибка базы данных: {}", e)))?;
-
-        // 3. Сначала удаляем всех участников команды этого проекта (очистка связей)
-        sqlx::query(
-            r#"
-            DELETE FROM project_team_members 
-            WHERE project_id = $1
-            "#,
-        )
-        .bind(project_id)
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| Status::internal(format!("Не удалось удалить участников проекта: {}", e)))?;
-
-        // 4. Выполняем физическое удаление самого проекта из таблицы projects
+        // 2. Выполняем физическое удаление строки из базы данных
+        // Благодаря ON DELETE CASCADE в БД, связанные участники удалятся автоматически!
         let row_result = sqlx::query(
             r#"
             DELETE FROM projects 
@@ -442,18 +426,13 @@ impl ProjectsService for MyProjectsService {
             "#,
         )
         .bind(project_id)
-        .fetch_optional(&mut *tx)
+        .fetch_optional(&self.db_pool)
         .await
-        .map_err(|e| Status::internal(format!("Не удалось удалить проект: {}", e)))?;
+        .map_err(|e| Status::internal(format!("Ошибка базы данных при удалении: {}", e)))?;
 
-        // 5. Проверяем результат удаления проекта
+        // 3. Формируем ответ
         match row_result {
             Some(row) => {
-                // Если проект успешно удален, фиксируем транзакцию
-                tx.commit().await.map_err(|e| {
-                    Status::internal(format!("Не удалось подтвердить транзакцию: {}", e))
-                })?;
-
                 let deleted_id: Uuid = row.get("id");
                 Ok(Response::new(HardDeleteProjectResponse {
                     id: deleted_id.to_string(),
@@ -461,15 +440,11 @@ impl ProjectsService for MyProjectsService {
                 }))
             }
             // Если проекта с таким ID вообще не было в базе данных
-            None => {
-                // Откатывать транзакцию явно не обязательно (sqlx сделает Drop),
-                // но возвращаем ошибку, что объект не найден
-                Err(Status::not_found("Проект не найден"))
-            }
+            None => Err(Status::not_found("Проект не найден")),
         }
     }
 
-        async fn get_user_projects(
+    async fn get_user_projects(
         &self,
         request: Request<GetUserProjectsRequest>,
     ) -> Result<Response<GetUserProjectsResponse>, Status> {
@@ -480,13 +455,9 @@ impl ProjectsService for MyProjectsService {
             .map_err(|_| Status::invalid_argument("Неверный формат user_id (ожидался UUID)"))?;
 
         // 2. Обрабатываем опциональный фильтр по статусу
-        let status_filter = req.status.and_then(|s| {
-            if s.trim().is_empty() {
-                None
-            } else {
-                Some(s)
-            }
-        });
+        let status_filter = req
+            .status
+            .and_then(|s| if s.trim().is_empty() { None } else { Some(s) });
 
         // 3. Выполняем SQL-запрос с агрегацией участников
         // Используем подзапрос в WHERE, чтобы не отсекать других участников проекта при фильтрации
@@ -525,13 +496,165 @@ impl ProjectsService for MyProjectsService {
         .map_err(|e| Status::internal(format!("Ошибка получения проектов пользователя: {}", e)))?;
 
         // 4. Маппим строки БД в gRPC-структуру Project через ваш row_to_project
-        let projects = rows
-            .iter()
-            .map(|row| Self::row_to_project(row))
-            .collect();
+        let projects = rows.iter().map(|row| Self::row_to_project(row)).collect();
 
         // 5. Возвращаем ответ (если проектов нет, вернется корректный пустой список)
         Ok(Response::new(GetUserProjectsResponse { projects }))
+    }
+
+        async fn add_team_member(
+        &self,
+        request: Request<AddTeamMemberRequest>,
+    ) -> Result<Response<AddTeamMemberResponse>, Status> {
+        let req = request.into_inner();
+
+        // 1. Валидация UUID
+        let project_id = Uuid::parse_str(&req.project_id)
+            .map_err(|_| Status::invalid_argument("Неверный формат project_id (ожидался UUID)"))?;
+        let user_id = Uuid::parse_str(&req.user_id)
+            .map_err(|_| Status::invalid_argument("Неверный формат user_id (ожидался UUID)"))?;
+
+        // 2. Проверяем, существует ли проект и не удален ли он (Soft Delete)
+        let project_exists = sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS(SELECT 1 FROM projects WHERE id = $1 AND deleted_at IS NULL)"
+        )
+        .bind(project_id)
+        .fetch_one(&self.db_pool)
+        .await
+        .map_err(|e| Status::internal(format!("Ошибка проверки проекта: {}", e)))?;
+
+        if !project_exists {
+            return Err(Status::not_found("Проект не найден или был удален"));
+        }
+
+        // 3. Открываем транзакцию
+        let mut tx = self
+            .db_pool
+            .begin()
+            .await
+            .map_err(|e| Status::internal(format!("Ошибка базы данных: {}", e)))?;
+
+        // 4. Вставляем запись. Если связь уже есть, ON CONFLICT DO NOTHING не выдаст ошибку
+        sqlx::query(
+            r#"
+            INSERT INTO project_team_members (project_id, user_id)
+            VALUES ($1, $2)
+            ON CONFLICT (project_id, user_id) DO NOTHING
+            "#,
+        )
+        .bind(project_id)
+        .bind(user_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| Status::internal(format!("Не удалось добавить участника: {}", e)))?;
+
+        // Обновляем edited_at у проекта
+        sqlx::query("UPDATE projects SET edited_at = NOW() WHERE id = $1")
+            .bind(project_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| Status::internal(format!("Не удалось обновить дату изменения проекта: {}", e)))?;
+
+        tx.commit()
+            .await
+            .map_err(|e| Status::internal(format!("Не удалось подтвердить транзакцию: {}", e)))?;
+
+        // 5. Получаем финальное состояние проекта для gRPC-ответа
+        let final_row = sqlx::query(
+            r#"
+            SELECT p.*, COALESCE(ARRAY_AGG(ptm.user_id) FILTER (WHERE ptm.user_id IS NOT NULL), '{}') as team_members
+            FROM projects p
+            LEFT JOIN project_team_members ptm ON p.id = ptm.project_id
+            WHERE p.id = $1
+            GROUP BY p.id
+            "#,
+        )
+        .bind(project_id)
+        .fetch_one(&self.db_pool)
+        .await
+        .map_err(|e| Status::internal(format!("Ошибка получения обновленного проекта: {}", e)))?;
+
+        Ok(Response::new(AddTeamMemberResponse {
+            success: true,
+            project: Some(Self::row_to_project(&final_row)),
+        }))
+    }
+
+        async fn remove_team_member(
+        &self,
+        request: Request<RemoveTeamMemberRequest>,
+    ) -> Result<Response<RemoveTeamMemberResponse>, Status> {
+        let req = request.into_inner();
+
+        // 1. Валидация UUID
+        let project_id = Uuid::parse_str(&req.project_id)
+            .map_err(|_| Status::invalid_argument("Неверный формат project_id (ожидался UUID)"))?;
+        let user_id = Uuid::parse_str(&req.user_id)
+            .map_err(|_| Status::invalid_argument("Неверный формат user_id (ожидался UUID)"))?;
+
+        // 2. Проверяем, существует ли проект и не удален ли он (Soft Delete)
+        let project_exists = sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS(SELECT 1 FROM projects WHERE id = $1 AND deleted_at IS NULL)"
+        )
+        .bind(project_id)
+        .fetch_one(&self.db_pool)
+        .await
+        .map_err(|e| Status::internal(format!("Ошибка проверки проекта: {}", e)))?;
+
+        if !project_exists {
+            return Err(Status::not_found("Проект не найден или был удален"));
+        }
+
+        // 3. Открываем транзакцию
+        let mut tx = self
+            .db_pool
+            .begin()
+            .await
+            .map_err(|e| Status::internal(format!("Ошибка базы данных: {}", e)))?;
+
+        // 4. Удаляем запись из таблицы связей
+        sqlx::query(
+            r#"
+            DELETE FROM project_team_members 
+            WHERE project_id = $1 AND user_id = $2
+            "#,
+        )
+        .bind(project_id)
+        .bind(user_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| Status::internal(format!("Не удалось удалить участника из команды: {}", e)))?;
+
+        // Обновляем edited_at у проекта
+        sqlx::query("UPDATE projects SET edited_at = NOW() WHERE id = $1")
+            .bind(project_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| Status::internal(format!("Не удалось обновить дату изменения проекта: {}", e)))?;
+
+        tx.commit()
+            .await
+            .map_err(|e| Status::internal(format!("Не удалось подтвердить транзакцию: {}", e)))?;
+
+        // 5. Получаем финальное состояние проекта для gRPC-ответа
+        let final_row = sqlx::query(
+            r#"
+            SELECT p.*, COALESCE(ARRAY_AGG(ptm.user_id) FILTER (WHERE ptm.user_id IS NOT NULL), '{}') as team_members
+            FROM projects p
+            LEFT JOIN project_team_members ptm ON p.id = ptm.project_id
+            WHERE p.id = $1
+            GROUP BY p.id
+            "#,
+        )
+        .bind(project_id)
+        .fetch_one(&self.db_pool)
+        .await
+        .map_err(|e| Status::internal(format!("Ошибка получения обновленного проекта: {}", e)))?;
+
+        Ok(Response::new(RemoveTeamMemberResponse {
+            success: true,
+            project: Some(Self::row_to_project(&final_row)),
+        }))
     }
 
 }

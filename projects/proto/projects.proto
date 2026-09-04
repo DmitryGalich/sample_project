@@ -11,6 +11,9 @@ service ProjectsService {
     rpc HardDeleteProject (HardDeleteProjectRequest) returns (HardDeleteProjectResponse);
 
     rpc GetUserProjects (GetUserProjectsRequest) returns (GetUserProjectsResponse);
+
+    rpc AddTeamMember (AddTeamMemberRequest) returns (AddTeamMemberResponse);
+    rpc RemoveTeamMember (RemoveTeamMemberRequest) returns (RemoveTeamMemberResponse);
 }
 
 message Project {
@@ -106,4 +109,24 @@ message GetUserProjectsRequest {
 
 message GetUserProjectsResponse {
     repeated Project projects = 1;
+}
+
+message AddTeamMemberRequest {
+    string project_id = 1;
+    string user_id = 2;
+}
+
+message AddTeamMemberResponse {
+    bool success = 1;
+    Project project = 2;
+}
+
+message RemoveTeamMemberRequest {
+    string project_id = 1;
+    string user_id = 2;
+}
+
+message RemoveTeamMemberResponse {
+    bool success = 1;
+    Project project = 2;
 }
