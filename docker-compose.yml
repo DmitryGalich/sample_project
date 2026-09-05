@@ -1,117 +1,153 @@
-version: '3.8'
 
 services:
-  gateway:
-    image: nginx:1.27 
-    container_name: gateway
-    volumes:
-      - ./gateway/nginx.conf:/etc/nginx/nginx.conf:ro
-    ports:
-      - "8080:8080"
-    depends_on:
-      - users
-      - projects
-    restart: unless-stopped
-    networks:
-      - internal_network
-
-  users:
-    build:
-      context: ./users
-      dockerfile: Dockerfile.prod
-      # dockerfile: Dockerfile.dev
-    container_name: users
-    depends_on:
-      users_db:
-        condition: service_healthy
-    expose:
-      - "50051"
-    environment:
-      - EXPOSED_ADDR=${USERS_EXPOSED_ADDR:-0.0.0.0:50051}
-      - DATABASE_URL=${USERS_DATABASE_URL:?USERS_DATABASE_URL is required}
-    restart: unless-stopped
-    networks:
-      - internal_network
-
-  users_db:
+  postgres:
     image: postgres:16-alpine
-    container_name: users_db
-    environment:
-      POSTGRES_USER: ${USERS_DB_USER:?USERS_DB_USER is required}
-      POSTGRES_PASSWORD: ${USERS_DB_PASSWORD:?USERS_DB_PASSWORD is required}
-      POSTGRES_DB: ${USERS_DB_NAME:-users_db}
-    expose:
-      - "5432"
-    volumes:
-      - users_db_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U admin -d users_db"]
-      interval: 3s
-      timeout: 3s
-      retries: 5
     restart: unless-stopped
-    networks:
-      - internal_network
 
-  projects:
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+    networks:
+      - backend
+
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "${POSTGRES_USER}", "-d", "${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s # Даем 10 секунд на инициализацию базы перед первой проверкой
+
+
+    security_opt:
+      - no-new-privileges:true
+
+
+  keycloak:
     build:
-      context: ./projects
-      dockerfile: Dockerfile.prod
-      # dockerfile: Dockerfile.dev
-    container_name: projects
-    depends_on:
-      users_db:
-        condition: service_healthy
-    expose:
-      - "50052"
-    environment:
-      - EXPOSED_ADDR=${PROJECTS_EXPOSED_ADDR:-0.0.0.0:50052}
-      - DATABASE_URL=${PROJECTS_DATABASE_URL:?PROJECTS_DATABASE_URL is required}
-    restart: unless-stopped
-    networks:
-      - internal_network
+      context: ./keycloak
 
-  projects_db:
-    image: postgres:16-alpine
-    container_name: projects_db
+    restart: unless-stopped
+
+    command:
+      - start
+      - --optimized
+      - --import-realm
+
     environment:
-      POSTGRES_USER: ${PROJECTS_DB_USER:?PROJECTS_DB_USER is required}
-      POSTGRES_PASSWORD: ${PROJECTS_DB_PASSWORD:?PROJECTS_DB_PASSWORD is required}
-      POSTGRES_DB: ${PROJECTS_DB_NAME:-projects_db}
-    expose:
-      - "5432"
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB}
+      KC_DB_USERNAME: ${POSTGRES_USER}
+      KC_DB_PASSWORD: ${POSTGRES_PASSWORD}
+
+      KC_HOSTNAME: ${KEYCLOAK_URL}
+      KC_PROXY_HEADERS: xforwarded
+      KC_HTTP_ENABLED: "true"
+
+      KC_HEALTH_ENABLED: "true"
+      KC_METRICS_ENABLED: "false"
+
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD}
+
+      JAVA_OPTS_KC_HEAP: "-XX:MaxRAMPercentage=70 -XX:InitialRAMPercentage=50"
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+
     volumes:
-      - projects_db_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U admin -d projects_db"]
-      interval: 3s
-      timeout: 3s
-      retries: 5
-    restart: unless-stopped
-    networks:
-      - internal_network
+      - keycloak_data:/opt/keycloak/data
 
-  pgadmin:
-    image: dpage/pgadmin4
-    container_name: pgadmin
-    environment:
-      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL:?PGADMIN_DEFAULT_EMAIL is required}
-      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD:?PGADMIN_DEFAULT_PASSWORD is required}
-    ports:
-      - "5050:80"
-    depends_on:
-      users_db:
-        condition: service_healthy
-      projects_db:
-        condition: service_healthy
-    restart: unless-stopped
     networks:
-      - internal_network
+      - backend
+
+    expose:
+      - "8080"
+
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "exec 3<>/dev/tcp/127.0.0.1/8080"
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+
+    security_opt:
+      - no-new-privileges:true
+
+
+  backend:
+    build:
+      context: ./backend
+
+    restart: unless-stopped
+
+    environment:
+      OIDC_ISSUER: ${KEYCLOAK_URL}/realms/${KEYCLOAK_REALM}
+      OIDC_AUDIENCE: backend
+
+    depends_on:
+      keycloak:
+        condition: service_healthy
+
+    networks:
+      - backend
+
+    expose:
+      - "8080"
+
+    read_only: true
+    tmpfs:
+      - /tmp
+
+    security_opt:
+      - no-new-privileges:true
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://0.0.0.0:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+
+
+  nginx:
+    image: nginx:1.27
+    restart: unless-stopped
+
+    depends_on:
+      keycloak:
+        condition: service_healthy
+      backend:
+        condition: service_healthy
+
+    ports:
+      - "80:80"
+      - "443:443"
+
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/certs:/etc/nginx/certs:ro
+
+    networks:
+      - backend
+
+    security_opt:
+      - no-new-privileges:true
+
 
 volumes:
-  users_db_data:
-  projects_db_data:
+  postgres_data:
+  keycloak_data:
+
 
 networks:
-  internal_network:
+  backend:
     driver: bridge
