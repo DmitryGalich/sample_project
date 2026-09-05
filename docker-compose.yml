@@ -27,8 +27,8 @@ services:
     expose:
       - "50051"
     environment:
-      - EXPOSED_ADDR=0.0.0.0:50051
-      - DATABASE_URL=postgres://admin:admin@users_db:5432/users_db
+      - EXPOSED_ADDR=${USERS_EXPOSED_ADDR:-0.0.0.0:50051}
+      - DATABASE_URL=${USERS_DATABASE_URL:?USERS_DATABASE_URL is required}
     restart: unless-stopped
     networks:
       - internal_network
@@ -37,9 +37,9 @@ services:
     image: postgres:16-alpine
     container_name: users_db
     environment:
-      POSTGRES_USER: admin
-      POSTGRES_PASSWORD: admin
-      POSTGRES_DB: users_db
+      POSTGRES_USER: ${USERS_DB_USER:?USERS_DB_USER is required}
+      POSTGRES_PASSWORD: ${USERS_DB_PASSWORD:?USERS_DB_PASSWORD is required}
+      POSTGRES_DB: ${USERS_DB_NAME:-users_db}
     expose:
       - "5432"
     volumes:
@@ -65,8 +65,8 @@ services:
     expose:
       - "50052"
     environment:
-      - EXPOSED_ADDR=0.0.0.0:50052
-      - DATABASE_URL=postgres://admin:admin@projects_db:5432/projects_db
+      - EXPOSED_ADDR=${PROJECTS_EXPOSED_ADDR:-0.0.0.0:50052}
+      - DATABASE_URL=${PROJECTS_DATABASE_URL:?PROJECTS_DATABASE_URL is required}
     restart: unless-stopped
     networks:
       - internal_network
@@ -75,9 +75,9 @@ services:
     image: postgres:16-alpine
     container_name: projects_db
     environment:
-      POSTGRES_USER: admin
-      POSTGRES_PASSWORD: admin
-      POSTGRES_DB: projects_db
+      POSTGRES_USER: ${PROJECTS_DB_USER:?PROJECTS_DB_USER is required}
+      POSTGRES_PASSWORD: ${PROJECTS_DB_PASSWORD:?PROJECTS_DB_PASSWORD is required}
+      POSTGRES_DB: ${PROJECTS_DB_NAME:-projects_db}
     expose:
       - "5432"
     volumes:
@@ -95,8 +95,8 @@ services:
     image: dpage/pgadmin4
     container_name: pgadmin
     environment:
-      PGADMIN_DEFAULT_EMAIL: admin@admin.com
-      PGADMIN_DEFAULT_PASSWORD: admin
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL:?PGADMIN_DEFAULT_EMAIL is required}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD:?PGADMIN_DEFAULT_PASSWORD is required}
     ports:
       - "5050:80"
     depends_on:

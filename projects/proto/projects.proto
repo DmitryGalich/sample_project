@@ -62,7 +62,6 @@ message GetProjectResponse {
 message UpdateProjectRequest {
     string id = 1; 
     
-    optional string owner_id = 2;
     optional string title = 3;
     optional string description = 4;
     optional int64 deadline = 5;

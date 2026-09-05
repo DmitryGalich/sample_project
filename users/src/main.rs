@@ -24,7 +24,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .context("Not found env var DATABASE_URL")?
         .parse()
         .context("Not parsed env var DATABASE_URL")?;
-    println!("DATABASE_URL: {}", database_url);
+    println!("Database configured");
 
     let db_pool = PgPool::connect(&database_url)
         .await

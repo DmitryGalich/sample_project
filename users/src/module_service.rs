@@ -28,8 +28,6 @@ impl MyUsersService {
             id: row.get::<Uuid, _>("id").to_string(),
             email: row.get("email"),
             display_name: row.get("display_name"),
-            password_hash: row.get("password_hash"),
-
             first_name: row.get::<Option<String>, _>("first_name"),
             last_name: row.get::<Option<String>, _>("last_name"),
             avatar_url: row.get::<Option<String>, _>("avatar_url"),
@@ -70,7 +68,7 @@ impl UsersService for MyUsersService {
         let row_result = sqlx::query(
             r#"
             SELECT 
-                id, email, display_name, password_hash, 
+                id, email, display_name, 
                 first_name, last_name, avatar_url, phone, bio, 
                 user_role, is_active, created_at, edited_at, deleted_at, last_login_at
             FROM users 
@@ -99,11 +97,7 @@ impl UsersService for MyUsersService {
         let password_hash = hash(&req.password, DEFAULT_COST)
             .map_err(|e| Status::internal(format!("Ошибка хэширования пароля: {}", e)))?;
 
-        let user_role = if req.user_role.trim().is_empty() {
-            "customer".to_string()
-        } else {
-            req.user_role
-        };
+        let user_role = "customer";
 
         let row = sqlx::query(
             r#"
@@ -113,7 +107,7 @@ impl UsersService for MyUsersService {
             ) 
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
             RETURNING 
-                id, email, display_name, password_hash, 
+                id, email, display_name, 
                 first_name, last_name, avatar_url, phone, bio, 
                 user_role, is_active, created_at, edited_at, deleted_at, last_login_at
             "#,
@@ -157,13 +151,11 @@ impl UsersService for MyUsersService {
         if req.email.is_none()
             && req.display_name.is_none()
             && req.password.is_none()
-            && req.is_active.is_none()
             && req.first_name.is_none()
             && req.last_name.is_none()
             && req.avatar_url.is_none()
             && req.phone.is_none()
             && req.bio.is_none()
-            && req.user_role.is_none()
         {
             return Err(Status::invalid_argument("Не указаны поля для обновления"));
         }
@@ -196,13 +188,6 @@ impl UsersService for MyUsersService {
                 query_builder.push(", ");
             }
             query_builder.push("password_hash = ").push_bind(hash);
-            need_comma = true;
-        }
-        if let Some(is_active) = req.is_active {
-            if need_comma {
-                query_builder.push(", ");
-            }
-            query_builder.push("is_active = ").push_bind(is_active);
             need_comma = true;
         }
         if let Some(ref first_name) = req.first_name {
@@ -240,13 +225,6 @@ impl UsersService for MyUsersService {
             query_builder.push("bio = ").push_bind(bio);
             need_comma = true;
         }
-        if let Some(ref user_role) = req.user_role {
-            if need_comma {
-                query_builder.push(", ");
-            }
-            query_builder.push("user_role = ").push_bind(user_role);
-            need_comma = true;
-        }
 
         // Всегда обновляем дату редактирования профиля
         if need_comma {
@@ -259,7 +237,7 @@ impl UsersService for MyUsersService {
         query_builder.push(
             r#"
         RETURNING 
-            id, email, display_name, password_hash, 
+            id, email, display_name, 
             first_name, last_name, avatar_url, phone, bio, 
             user_role, is_active, created_at, edited_at, deleted_at, last_login_at
         "#,
@@ -356,7 +334,7 @@ impl UsersService for MyUsersService {
                 edited_at = NOW()
             WHERE id = $1 AND deleted_at IS NOT NULL
             RETURNING 
-                id, email, display_name, password_hash, 
+                id, email, display_name, 
                 first_name, last_name, avatar_url, phone, bio, 
                 user_role, is_active, created_at, edited_at, deleted_at, last_login_at
             "#,

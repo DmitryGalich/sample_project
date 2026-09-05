@@ -114,7 +114,7 @@ impl ProjectsService for MyProjectsService {
 
         // 1. Валидация UUID владельца
         let owner_uuid = Uuid::from_str(&req.owner_id)
-            .map_err(|_| Status::invalid_argument("Неверный формат owner_id (ожидался UUID)"))?;
+            .map_err(|_| Status::invalid_argument("Неверный формат owner_id (ожидался UUID)"))?;| Status::invalid_argument("Неверный формат owner_id (ожидался UUID)"))?;
 
         // Валидация UUID участников команды
         let mut team_member_uuids = Vec::new();
@@ -153,7 +153,6 @@ impl ProjectsService for MyProjectsService {
             RETURNING id, owner_id, title, description, created_at, deadline, edited_at, deleted_at, status
             "#,
         )
-        .bind(owner_uuid)
         .bind(&req.title)
         .bind(&req.description) // Option<String> отлично биндится в nullable поле
         .bind(deadline_dt)      // Option<DateTime<Utc>> биндится в nullable timestamp
@@ -221,15 +220,6 @@ impl ProjectsService for MyProjectsService {
         let project_id = Uuid::from_str(&req.id)
             .map_err(|_| Status::invalid_argument("Неверный формат ID проекта (ожидался UUID)"))?;
 
-        // 2. Валидация опционального owner_id (если передан)
-        let owner_uuid = if let Some(ref oid) = req.owner_id {
-            Some(Uuid::from_str(oid).map_err(|_| {
-                Status::invalid_argument("Неверный формат owner_id (ожидался UUID)")
-            })?)
-        } else {
-            None
-        };
-
         // 3. Парсинг опционального дедлайна из i64 (Unix timestamp) в DateTime<Utc>
         let deadline_dt = req
             .deadline
@@ -248,16 +238,14 @@ impl ProjectsService for MyProjectsService {
             r#"
             UPDATE projects
             SET 
-                owner_id = COALESCE($1, owner_id),
-                title = COALESCE($2, title),
-                description = COALESCE($3, description),
-                deadline = COALESCE($4, deadline),
-                status = COALESCE($5, status),
+                title = COALESCE($1, title),
+                description = COALESCE($2, description),
+                deadline = COALESCE($3, deadline),
+                status = COALESCE($4, status),
                 edited_at = NOW()
-            WHERE id = $6 AND deleted_at IS NULL
+            WHERE id = $5 AND deleted_at IS NULL
             "#,
         )
-        .bind(owner_uuid)
         .bind(&req.title)
         .bind(&req.description)
         .bind(deadline_dt)

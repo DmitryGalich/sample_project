@@ -16,8 +16,7 @@ message User {
     
     string email = 2;
     string display_name = 3;
-    
-    string password_hash = 4; 
+     
 
     optional string first_name = 5;
     optional string last_name = 6;
@@ -45,7 +44,6 @@ message AddUserRequest {
     optional string phone = 7;
     optional string bio = 8;
     
-    string user_role = 9; // По умолчанию на бэкенде ставим "customer"
 }
 
 message AddUserResponse {
@@ -66,13 +64,11 @@ message UpdateUserRequest {
     optional string email = 2;
     optional string display_name = 3;
     optional string password = 4;
-    optional bool is_active = 5;
     optional string first_name = 6;
     optional string last_name = 7;
     optional string avatar_url = 8;
     optional string phone = 9;
     optional string bio = 10;
-    optional string user_role = 11;
 }
 
 message UpdateUserResponse {

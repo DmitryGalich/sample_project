@@ -1,0 +1,424 @@
+Сейчас проект — хороший каркас для MVP, но авторизацию поверх текущих RPC добавлять нельзя: сначала нужно закрыть доверенную границу между клиентом и сервисами.
+
+**Что критично исправить**
+
+- `users.proto` возвращает `password_hash` в `User`; это нельзя отдавать клиенту и другим сервисам.
+- `AddUserRequest.user_role` позволяет клиенту зарегистрироваться администратором.
+- `UpdateUserRequest` позволяет клиенту менять `user_role` и `is_active`.
+- `projects` принимает `owner_id` и `user_id` из запроса. Клиент может создать проект от имени другого пользователя или добавить произвольного участника.
+- В `GetUserProjectsRequest` пользователь сам передаёт `user_id`.
+- В `projects/migrations/01_init.sql` нет внешних ключей на пользователей — можно получить «висячие» ссылки.
+- В `users/migrations/03_profile_fields_and_password_hash.sql` используется заглушка `CHANGE_ME_IN_FUTURE`; такой пользователь потенциально может пройти проверку, если пароль сравнивается некорректно.
+- В `main.rs` логируется `DATABASE_URL`, включая пароль.
+- В production compose используются `admin/admin`; секреты нужно вынести в secrets/env.
+- Для realtime-мессенджера текущий Nginx/gRPC-only контур неудобен: нужен отдельный WebSocket endpoint.
+
+## Рекомендуемая архитектура
+
+```text
+Flutter
+   │
+   ├── HTTPS/JSON API ───────┐
+   ├── WebSocket ────────────┤
+   └── gRPC, только internal │
+                             ▼
+                       API Gateway
+                             │
+          ┌──────────────────┼──────────────────┐
+          ▼                  ▼                  ▼
+       auth/users        projects          messenger
+          │                  │                  │
+      users_db          projects_db       messenger_db
+```
+
+Для Flutter я бы не делал публичный API напрямую через gRPC. Оптимальная схема:
+
+- наружу: HTTPS API, лучше REST или Connect;
+- realtime: WebSocket;
+- между backend-сервисами: gRPC;
+- PostgreSQL: отдельная БД на bounded context можно оставить.
+
+Flutter поддерживает gRPC, но REST/JSON проще для auth-flow, отладки, deep links, OAuth callback и совместимости с платформами. WebSocket в Flutter поддерживается нормально.
+
+## Авторизация
+
+Для этого проекта лучше начать с серверных сессий, а не с JWT.
+
+### Вариант по умолчанию
+
+- `auth` как отдельный модуль внутри `users` на первом этапе;
+- пароль: `Argon2id`, не `bcrypt`;
+- после входа сервер создаёт случайный opaque session token;
+- в БД хранится только хэш session token;
+- клиент получает token через HTTPS;
+- Flutter хранит его в `flutter_secure_storage`;
+- access/session token имеет срок жизни, например 30 дней с ротацией;
+- refresh-сессии можно отзывать по устройству;
+- logout удаляет сессию на сервере.
+
+Для мобильного Flutter-клиента `HttpOnly cookie` обычно неудобнее, чем secure token. Для web-клиента можно использовать `HttpOnly; Secure; SameSite=Lax` cookie.
+
+### Таблицы
+
+```sql
+CREATE TABLE auth_sessions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    token_hash BYTEA NOT NULL UNIQUE,
+    user_agent TEXT,
+    device_name TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    last_used_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    expires_at TIMESTAMPTZ NOT NULL,
+    revoked_at TIMESTAMPTZ
+);
+
+CREATE INDEX auth_sessions_user_id_idx
+    ON auth_sessions(user_id);
+
+CREATE INDEX auth_sessions_active_idx
+    ON auth_sessions(token_hash)
+    WHERE revoked_at IS NULL;
+```
+
+В публичном API должны появиться примерно такие операции:
+
+```text
+POST /auth/register
+POST /auth/login
+POST /auth/refresh
+POST /auth/logout
+GET  /auth/me
+POST /auth/password/forgot
+POST /auth/password/reset
+```
+
+gRPC interceptor или middleware должен извлекать identity из metadata:
+
+```text
+authorization: Bearer <session-token>
+```
+
+и помещать в request extensions:
+
+```rust
+struct AuthenticatedUser {
+    user_id: Uuid,
+    role: UserRole,
+}
+```
+
+Сервисы должны использовать только эту identity:
+
+```rust
+let actor = request.extensions().get::<AuthenticatedUser>()?;
+```
+
+Не использовать `owner_id`/`user_id` из тела запроса для определения текущего пользователя.
+
+## Как изменить контракты
+
+Текущие административные операции нужно разделить.
+
+### Публичный `User`
+
+Из `User` удалить:
+
+```protobuf
+string password_hash = 4;
+```
+
+Парольный хэш должен быть только внутренним полем БД/доменных структур.
+
+Не принимать роль при регистрации:
+
+```protobuf
+message RegisterRequest {
+    string email = 1;
+    string password = 2;
+    string display_name = 3;
+    optional string first_name = 4;
+    optional string last_name = 5;
+}
+```
+
+Роль назначать сервером:
+
+```rust
+let role = UserRole::Customer;
+```
+
+Из обычного `UpdateUserRequest` удалить:
+
+```protobuf
+optional bool is_active = 5;
+optional string user_role = 11;
+```
+
+Сделать отдельные admin-only методы для изменения роли, блокировки и удаления пользователя.
+
+### Projects
+
+Вместо:
+
+```protobuf
+message CreateProjectRequest {
+    string owner_id = 1;
+}
+```
+
+использовать:
+
+```protobuf
+message CreateProjectRequest {
+    string title = 1;
+    optional string description = 2;
+    optional int64 deadline = 3;
+    string status = 4;
+}
+```
+
+`owner_id` брать из authenticated identity.
+
+Вместо:
+
+```protobuf
+message GetUserProjectsRequest {
+    string user_id = 1;
+}
+```
+
+использовать:
+
+```protobuf
+message GetMyProjectsRequest {
+    optional string status = 1;
+}
+```
+
+Для администратора можно сделать отдельный запрос с `user_id`, защищённый policy check.
+
+## Авторизация проектов
+
+Минимальные правила:
+
+- создать проект может authenticated user;
+- изменить проект может owner или участник с нужной ролью;
+- удалить/восстановить — owner/admin;
+- добавить участника — owner или project manager;
+- обычный пользователь не может назначать себе роль;
+- сервер проверяет существование пользователя через user service или локальный read-model;
+- запросы на project membership лучше оформлять как отдельные команды.
+
+В `projects` стоит добавить:
+
+```sql
+ALTER TABLE projects
+    ADD CONSTRAINT projects_owner_id_format CHECK (owner_id IS NOT NULL);
+
+CREATE INDEX projects_owner_id_idx
+    ON projects(owner_id);
+
+CREATE INDEX project_team_members_user_id_idx
+    ON project_team_members(user_id);
+```
+
+Физический FK между разными базами PostgreSQL не получится сделать напрямую. Поэтому либо:
+
+1. оставить `user_id` как reference-by-id и проверять пользователя через users service;
+2. завести локальную таблицу `project_users`/read-model;
+3. перейти на одну PostgreSQL БД с разными схемами, если система пока маленькая.
+
+Для текущего проекта я бы выбрал вариант 1 сейчас и локальный read-model позже.
+
+## Мессенджер
+
+Лучше отдельный `messenger` сервис и отдельная БД.
+
+Основные сущности:
+
+```text
+conversations
+conversation_members
+messages
+message_reads
+attachments
+```
+
+Минимальная схема:
+
+```sql
+CREATE TABLE conversations (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    project_id UUID,
+    created_by UUID NOT NULL,
+    kind TEXT NOT NULL CHECK (kind IN ('direct', 'group', 'project')),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE conversation_members (
+    conversation_id UUID NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    user_id UUID NOT NULL,
+    joined_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    left_at TIMESTAMPTZ,
+    PRIMARY KEY (conversation_id, user_id)
+);
+
+CREATE TABLE messages (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    conversation_id UUID NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    sender_id UUID NOT NULL,
+    client_message_id UUID NOT NULL,
+    body TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    edited_at TIMESTAMPTZ,
+    deleted_at TIMESTAMPTZ,
+    UNIQUE (sender_id, client_message_id)
+);
+
+CREATE INDEX messages_conversation_created_idx
+    ON messages(conversation_id, created_at DESC);
+```
+
+Realtime:
+
+```text
+Flutter ── WebSocket ──> Gateway ──> messenger
+                              │
+                              └── Redis Pub/Sub или NATS
+```
+
+Для одного backend-инстанса можно начать без брокера. Если будет несколько реплик messenger, нужен Redis Pub/Sub, NATS или Kafka. Для чата обычно достаточно Redis Pub/Sub.
+
+WebSocket-события:
+
+```json
+{
+  "type": "message.created",
+  "conversation_id": "...",
+  "message": {}
+}
+```
+
+Обязательно добавить:
+
+- idempotency через `client_message_id`;
+- пагинацию по cursor, не offset;
+- read receipts;
+- offline sync;
+- ограничение размера сообщения;
+- rate limit;
+- проверку membership на каждую отправку;
+- загрузку файлов через S3-compatible storage, не через PostgreSQL.
+
+## Flutter-конструктор квартиры
+
+Flutter для этого подходит, но нужно заранее выбрать уровень сложности.
+
+### Если нужен 2D-планировщик
+
+Flutter подходит хорошо:
+
+- `CustomPainter` для отрисовки стен, комнат и объектов;
+- `InteractiveViewer` для pan/zoom;
+- `GestureDetector` для drag/resize/rotate;
+- `vector_math` для матриц и геометрии;
+- `flutter_bloc`/`riverpod` для состояния;
+- экспорт в JSON и SVG/PDF.
+
+Модель должна быть не «набор пикселей», а нормальная геометрическая сцена:
+
+```json
+{
+  "version": 1,
+  "units": "mm",
+  "rooms": [],
+  "walls": [],
+  "objects": [],
+  "camera": {}
+}
+```
+
+Координаты хранить в миллиметрах или другой реальной единице, а не в logical pixels.
+
+### Если нужен 3D-конструктор
+
+Flutter сам по себе не является полноценным 3D-движком. Реальные варианты:
+
+1. **Flutter + Unity через platform bridge**  
+   Лучший вариант для сложного 3D, но усложняет desktop/web и CI.
+
+2. **Flutter + WebView + Three.js/Babylon.js**  
+   Хороший вариант для web/mobile, если 3D-редактор можно сделать как web-модуль.
+
+3. **Flutter + Filament/SceneKit/Sceneform через нативные плагины**  
+   Производительно, но потребуется отдельная реализация для iOS, Android, Windows/macOS.
+
+4. **Чистый Flutter CustomPainter**  
+   Подходит для 2D и простых псевдо-3D эффектов, но не для полноценного 3D-редактора.
+
+Моя рекомендация:
+
+- первую версию конструктора сделать 2D на Flutter;
+- хранить сцену в платформенно-независимом JSON;
+- заложить `scene_version`;
+- позднее подключить Three.js или Unity, не меняя backend-модель;
+- рендерить превью и thumbnail отдельно;
+- файлы/текстуры хранить в S3/MinIO.
+
+## Что изменить в текущей структуре
+
+```text
+users/
+  src/
+    auth/
+      password.rs
+      sessions.rs
+      service.rs
+    users/
+      service.rs
+    middleware/
+      auth.rs
+
+projects/
+  src/
+    authorization.rs
+    service.rs
+
+messenger/
+  src/
+    auth.rs
+    conversations.rs
+    messages.rs
+    websocket.rs
+
+gateway/
+  nginx.conf
+```
+
+Также стоит добавить общий внутренний crate:
+
+```text
+crates/
+  auth-context/
+  error/
+  ids/
+  proto/
+```
+
+Но не выносить туда бизнес-логику и не делать общий доступ всех сервисов к одной модели пользователя.
+
+## Приоритет внедрения
+
+1. Убрать `password_hash` из protobuf и ответов.
+2. Перестать принимать identity и роль из клиентского payload.
+3. Добавить `login/register/session/logout`.
+4. Добавить auth middleware/interceptor для gRPC.
+5. Переделать `projects` на authenticated identity.
+6. Вынести admin-операции в отдельные защищённые методы.
+7. Добавить публичный HTTPS API и WebSocket gateway.
+8. Реализовать messenger как отдельный bounded context.
+9. Начать конструктор с 2D-сцен и JSON-модели.
+10. Только затем выбирать Unity/Three.js для 3D.
+
+Для Flutter инструменты есть. Ограничение не в Flutter, а в том, что полноценный 3D-редактор потребует отдельного rendering engine. Для первой версии Flutter + `CustomPainter` + геометрическая JSON-модель — правильный и наименее рискованный путь.
