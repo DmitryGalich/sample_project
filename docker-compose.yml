@@ -56,8 +56,8 @@ services:
   projects:
     build:
       context: ./projects
-      # dockerfile: Dockerfile.prod
-      dockerfile: Dockerfile.dev
+      dockerfile: Dockerfile.prod
+      # dockerfile: Dockerfile.dev
     container_name: projects
     depends_on:
       users_db:
