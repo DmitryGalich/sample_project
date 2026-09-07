@@ -1,5 +1,19 @@
 
 services:
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.3
+    container_name: keycloak
+    command: start-dev --import-realm
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin
+    ports:
+      - "8081:8080"
+    volumes:
+      - ./keycloak:/opt/keycloak/data/import:ro
+    networks:
+      - internal_network
+
   gateway:
     image: nginx:1.27
     restart: unless-stopped
@@ -21,6 +35,8 @@ services:
       - "50051"
     environment:
       - EXPOSED_ADDR=0.0.0.0:50051
+      - KEYCLOAK_ISSUER=http://keycloak:8080/realms/sample
+      - KEYCLOAK_AUDIENCE=sample-api
     restart: unless-stopped
     networks:
       - internal_network
