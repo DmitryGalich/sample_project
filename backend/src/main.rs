@@ -1,30 +1,21 @@
+use axum::{routing::get, Router};
+use std::env;
+
 #[tokio::main]
 async fn main() {
-    let client = reqwest::Client::new();
+    let exposed_addr: String = env::var("EXPOSED_ADDR").expect("EXPOSED_ADDR must be set");
+    println!("EXPOSED_ADDR: {}", &exposed_addr);
 
-    let state = AppState {
-        issuer,
-        audience,
-    };
+    let app = Router::new().route("/health", get(health));
 
-    let app = Router::new()
-        .route("/health", get(health))
-        .with_state(state);
+    let listener = tokio::net::TcpListener::bind(exposed_addr).await.unwrap();
+    println!("Started...");
 
-    let listener =
-        tokio::net::TcpListener::bind("0.0.0.0:8080")
-            .await
-            .expect("failed to bind");
+    axum::serve(listener, app).await.unwrap();
 
-    info!("listening on 0.0.0.0:8080");
-
-    axum::serve(listener, app)
-        .await
-        .expect("server failed");
+    println!("Stopped");
 }
 
-async fn health() -> impl IntoResponse {
-    Json(serde_json::json!({
-        "status": "ok"
-    }))
+async fn health() -> &'static str {
+    "Backend health ok"
 }
