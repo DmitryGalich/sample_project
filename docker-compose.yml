@@ -11,6 +11,39 @@ services:
     volumes:
       - ./gateway/nginx.conf:/etc/nginx/nginx.conf:ro
 
+  # База данных для Keycloak
+  postgres_keycloak:
+    image: postgres:16-alpine
+    container_name: postgres_keycloak
+    environment:
+      POSTGRES_DB: keycloak
+      POSTGRES_USER: keycloak
+      POSTGRES_PASSWORD: StrongKeycloakPassword123!
+    volumes:
+      - keycloak_data:/var/lib/postgresql/data
+    networks:
+      - internal_network
+    restart: unless-stopped
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:24.0 # Используйте стабильную production-версию
+    container_name: keycloak
+    command: start-dev # Для продакшена используется 'start' с настройкой SSL/TLS сертификатов
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres_keycloak:5432/keycloak
+      KC_DB_USERNAME: keycloak
+      KC_DB_PASSWORD: StrongKeycloakPassword123!
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: SuperAdminPassword123!
+    ports:
+      - "8081:8080" # К админке Keycloak временно стучимся снаружи для настройки
+    depends_on:
+      - postgres_keycloak
+    networks:
+      - internal_network
+    restart: unless-stopped
+
   backend:
     build:
       context: ./backend
@@ -25,6 +58,9 @@ services:
     networks:
       - internal_network
       
+volumes:
+  keycloak_data:
+
 networks:
   internal_network:
     driver: bridge
