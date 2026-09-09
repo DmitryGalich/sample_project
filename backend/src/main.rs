@@ -6,132 +6,360 @@ use axum::{
     routing::get,
     Router,
 };
-use jsonwebtoken::{decode, decode_header, DecodingKey, Validation, Algorithm};
+
+use jsonwebtoken::{
+    decode,
+    decode_header,
+    Algorithm,
+    DecodingKey,
+    Validation,
+};
+
 use serde::{Deserialize, Serialize};
-use std::env;
-use std::sync::Arc;
+use std::{
+    collections::HashMap,
+    env,
+    sync::Arc,
+    time::{Duration, Instant},
+};
+
+use tokio::sync::RwLock;
+
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 struct Claims {
     sub: String,
-    preferred_username: String,
+
+    #[serde(default)]
+    preferred_username: Option<String>,
+
+    #[serde(default)]
     email: Option<String>,
+
     exp: usize,
+
     iss: String,
+
+    #[serde(default)]
+    aud: Vec<String>,
 }
 
-// Теперь храним готовый ключ валидации в памяти бэкенда!
-#[derive(Clone)]
-struct AppState {
-    keycloak_issuer_url: String,
-    decoding_key: Arc<DecodingKey>,
+
+#[derive(Debug, Deserialize)]
+struct Jwks {
+    keys: Vec<Jwk>,
 }
+
+
+#[derive(Debug, Deserialize)]
+struct Jwk {
+    kid: String,
+    kty: String,
+    n: String,
+    e: String,
+
+    #[serde(default)]
+    alg: Option<String>,
+
+    #[serde(default)]
+    use_: Option<String>,
+}
+
+
+struct JwksCache {
+    keys: HashMap<String, DecodingKey>,
+    loaded_at: Instant,
+}
+
+
+struct AppState {
+    issuer: String,
+    audience: String,
+    jwks_url: String,
+
+    jwks: RwLock<JwksCache>,
+}
+
+
+type SharedState = Arc<AppState>;
+
 
 #[tokio::main]
 async fn main() {
-    let exposed_addr = env::var("EXPOSED_ADDR").unwrap_or_else(|_| "0.0.0.0:50051".to_string());
-    
-    // ВАЖНО: Внутри сети Docker мы используем имя контейнера `keycloak`
-    let keycloak_internal_url = "http://keycloak:8080/realms/my-production-realm";
-    
-    println!("Скачивание публичных ключей JWKS из Keycloak при старте...");
-    
-    // Скачиваем ключи один раз при запуске бэкенда
-    let jwks_endpoint = format!("{}/protocol/openid-connect/certs", keycloak_internal_url);
-    
-    // Пробуем скачать ключи с несколькими попытками, так как Keycloak может запускаться чуть дольше бэкенда
-    let mut response = None;
-    for _ in 0..10 {
-        if let Ok(res) = reqwest::get(&jwks_endpoint).await {
-            response = Some(res);
-            break;
-        }
-        println!("Ожидание готовности Keycloak...");
-        tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
-    }
+    let exposed_addr =
+        env::var("EXPOSED_ADDR")
+            .unwrap_or_else(|_| "0.0.0.0:50051".to_string());
 
-    let response = response.expect("Не удалось подключиться к Keycloak JWKS эндпоинту!");
-    let jwks: serde_json::Value = response.json().await.expect("Не удалось распарсить JWKS JSON!");
-    
-    // Берем первый доступный ключ Keycloak для RS256
-    let keys = jwks["keys"].as_array().expect("Неверный формат JWKS: keys не найден");
-    let key_data = &keys[0]; // В проде для идеала ищут по kid, но первый ключ всегда основной
-    
-    let n = key_data["n"].as_str().expect("Компонент 'n' отсутствует");
-    let e = key_data["e"].as_str().expect("Компонент 'e' отсутствует");
-    
-    let decoding_key = DecodingKey::from_rsa_components(n, e)
-        .expect("Не удалось создать DecodingKey из RSA компонентов");
+    let issuer =
+        env::var("KEYCLOAK_ISSUER")
+            .expect("KEYCLOAK_ISSUER must be configured");
 
-    let state = Arc::new(AppState { 
-        keycloak_issuer_url: keycloak_internal_url.to_string(), 
-        decoding_key: Arc::new(decoding_key) 
+    let jwks_url =
+        env::var("KEYCLOAK_JWKS_URL")
+            .expect("KEYCLOAK_JWKS_URL must be configured");
+
+    let audience =
+        env::var("JWT_AUDIENCE")
+            .expect("JWT_AUDIENCE must be configured");
+
+    println!("Loading Keycloak JWKS...");
+
+    let keys = load_jwks(&jwks_url)
+        .await
+        .expect("Failed to load Keycloak JWKS");
+
+    let state = Arc::new(AppState {
+        issuer,
+        audience,
+        jwks_url,
+
+        jwks: RwLock::new(JwksCache {
+            keys,
+            loaded_at: Instant::now(),
+        }),
     });
 
-    let public_routes = Router::new().route("/health", get(health));
+    let public_routes =
+        Router::new()
+            .route("/health", get(health));
 
-    let protected_routes = Router::new()
-        .route("/protected-data", get(get_protected_data))
-        .route_layer(middleware::from_fn_with_state(state.clone(), auth_middleware));
+    let protected_routes =
+        Router::new()
+            .route(
+                "/protected-data",
+                get(get_protected_data),
+            )
+            .route_layer(
+                middleware::from_fn_with_state(
+                    state.clone(),
+                    auth_middleware,
+                ),
+            );
 
-    let app = Router::new()
-        .merge(public_routes)
-        .merge(protected_routes)
-        .with_state(state);
+    let app =
+        Router::new()
+            .merge(public_routes)
+            .merge(protected_routes)
+            .with_state(state);
 
-    let listener = tokio::net::TcpListener::bind(&exposed_addr).await.unwrap();
-    println!("Бэкенд успешно запущен и защищен! Слушаем {}...", exposed_addr);
-    axum::serve(listener, app).await.unwrap();
+    let listener =
+        tokio::net::TcpListener::bind(&exposed_addr)
+            .await
+            .expect("Failed to bind backend");
+
+    println!(
+        "Backend listening on {}",
+        exposed_addr
+    );
+
+    axum::serve(listener, app)
+        .await
+        .expect("Backend server failed");
 }
 
-// Теперь middleware работает мгновенно без сетевых запросов!
+
+async fn load_jwks(
+    url: &str,
+) -> Result<HashMap<String, DecodingKey>, Box<dyn std::error::Error + Send + Sync>> {
+    let client =
+        reqwest::Client::builder()
+            .timeout(Duration::from_secs(5))
+            .build()?;
+
+    let response =
+        client
+            .get(url)
+            .send()
+            .await?
+            .error_for_status()?;
+
+    let jwks: Jwks =
+        response.json().await?;
+
+    let mut keys = HashMap::new();
+
+    for jwk in jwks.keys {
+        // We only accept RSA signing keys.
+        if jwk.kty != "RSA" {
+            continue;
+        }
+
+        if let Some(alg) = &jwk.alg {
+            if alg != "RS256" {
+                continue;
+            }
+        }
+
+        let key =
+            DecodingKey::from_rsa_components(
+                &jwk.n,
+                &jwk.e,
+            )?;
+
+        keys.insert(jwk.kid, key);
+    }
+
+    if keys.is_empty() {
+        return Err("JWKS contains no usable RSA keys".into());
+    }
+
+    Ok(keys)
+}
+
+
+async fn refresh_jwks(
+    state: &SharedState,
+) -> Result<(), StatusCode> {
+    let keys =
+        load_jwks(&state.jwks_url)
+            .await
+            .map_err(|err| {
+                eprintln!(
+                    "Failed to refresh JWKS: {}",
+                    err
+                );
+
+                StatusCode::INTERNAL_SERVER_ERROR
+            })?;
+
+    let mut cache =
+        state.jwks.write().await;
+
+    cache.keys = keys;
+    cache.loaded_at = Instant::now();
+
+    Ok(())
+}
+
+
 async fn auth_middleware(
-    State(state): State<Arc<AppState>>,
+    State(state): State<SharedState>,
     mut req: Request,
     next: Next,
 ) -> Result<Response, StatusCode> {
-    let auth_header = req
-        .headers()
-        .get(AUTHORIZATION)
-        .and_then(|header| header.to_str().ok());
 
-    let token = match auth_header {
-        Some(header) if header.starts_with("Bearer ") => &header[7..],
-        _ => return Err(StatusCode::UNAUTHORIZED),
-    };
+    let auth_header =
+        req.headers()
+            .get(AUTHORIZATION)
+            .and_then(|h| h.to_str().ok());
 
-    let header = decode_header(token).map_err(|_| StatusCode::UNAUTHORIZED)?;
+    let token =
+        match auth_header {
+            Some(value)
+                if value.starts_with("Bearer ") =>
+            {
+                value
+                    .strip_prefix("Bearer ")
+                    .unwrap_or("")
+                    .trim()
+            }
+
+            _ => {
+                return Err(StatusCode::UNAUTHORIZED);
+            }
+        };
+
+    if token.is_empty() {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+
+    // ------------------------------------------------------------
+    // Read JWT header.
+    // ------------------------------------------------------------
+
+    let header =
+        decode_header(token)
+            .map_err(|_| StatusCode::UNAUTHORIZED)?;
+
+    // Never allow algorithm supplied by attacker.
     if header.alg != Algorithm::RS256 {
         return Err(StatusCode::UNAUTHORIZED);
     }
 
-    let mut validation = Validation::new(Algorithm::RS256);
-    validation.validate_exp = true; 
+    let kid =
+        header.kid
+            .ok_or(StatusCode::UNAUTHORIZED)?;
 
+    // ------------------------------------------------------------
+    // Find key by kid.
+    // ------------------------------------------------------------
+
+    let decoding_key = {
+        let cache =
+            state.jwks.read().await;
+
+        cache.keys.get(&kid).cloned()
+    };
+
+    let decoding_key =
+        match decoding_key {
+            Some(key) => key,
+
+            None => {
+                // Possible Keycloak key rotation.
+                //
+                // Refresh JWKS and try once more.
+                refresh_jwks(&state).await?;
+
+                let cache =
+                    state.jwks.read().await;
+
+                cache.keys
+                    .get(&kid)
+                    .cloned()
+                    .ok_or(StatusCode::UNAUTHORIZED)?
+            }
+        };
+
+    // ------------------------------------------------------------
+    // JWT validation.
+    // ------------------------------------------------------------
+
+    let mut validation =
+        Validation::new(Algorithm::RS256);
+
+    validation.validate_exp = true;
+
+    // Important: issuer is canonical public URL.
     validation.set_issuer(&[
-        "http://localhost:8080/realms/my-production-realm".to_string(),
-        "http://localhost:8081/realms/my-production-realm".to_string(),
-        state.keycloak_issuer_url.clone(), // http://keycloak:8080/...
+        state.issuer.as_str()
     ]);
 
-    // Отключаем проверку audience на этапе тестов, чтобы не было строгих конфликтов с client_id
-    validation.validate_aud = false; 
+    // Important: validate audience.
+    validation.set_audience(&[
+        state.audience.as_str()
+    ]);
 
-    match decode::<Claims>(token, &state.decoding_key, &validation) {
-        Ok(token_data) => {
-            req.extensions_mut().insert(token_data.claims);
-            Ok(next.run(req).await)
-        }
-        Err(err) => {
-            println!("Ошибка валидации токена: {:?}", err);
-            Err(StatusCode::UNAUTHORIZED)
-        }
-    }
+    let token_data =
+        decode::<Claims>(
+            token,
+            &decoding_key,
+            &validation,
+        )
+        .map_err(|err| {
+            eprintln!(
+                "JWT validation failed: {}",
+                err
+            );
+
+            StatusCode::UNAUTHORIZED
+        })?;
+
+    // ------------------------------------------------------------
+    // Put verified claims into request extensions.
+    // ------------------------------------------------------------
+
+    req.extensions_mut()
+        .insert(token_data.claims);
+
+    Ok(next.run(req).await)
 }
+
 
 async fn health() -> &'static str {
     "Backend health ok"
 }
+
 
 async fn get_protected_data() -> &'static str {
     "This is verified production data from Rust backend!"
