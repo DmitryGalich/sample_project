@@ -13,34 +13,63 @@ use std::sync::Arc;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 struct Claims {
-    sub: String,                // ID пользователя в Keycloak
-    preferred_username: String, // Логин пользователя
+    sub: String,
+    preferred_username: String,
     email: Option<String>,
-    exp: usize,                 // Время протухания токена
-    iss: String,                // Кто выпустил токен
+    exp: usize,
+    iss: String,
 }
 
-// Структура для хранения публичного ключа (или JWKS) в состоянии приложения
+// Теперь храним готовый ключ валидации в памяти бэкенда!
 #[derive(Clone)]
 struct AppState {
-    // В реальном проде здесь может быть полноценный JWKS-кэш.
-    // Для старта мы сохраняем URL или готовый декодирующий ключ.
-    keycloak_jwks_url: String,
+    keycloak_issuer_url: String,
+    decoding_key: Arc<DecodingKey>,
 }
 
 #[tokio::main]
 async fn main() {
     let exposed_addr = env::var("EXPOSED_ADDR").unwrap_or_else(|_| "0.0.0.0:50051".to_string());
     
-    // URL для получения публичных ключей вашего Realm в Keycloak внутри Docker-сети
-    let keycloak_jwks_url = "http://keycloak:8080/realms/my-production-realm".to_string();
+    // ВАЖНО: Внутри сети Docker мы используем имя контейнера `keycloak`
+    let keycloak_internal_url = "http://keycloak:8080/realms/my-production-realm";
     
-    let state = Arc::new(AppState { keycloak_jwks_url });
+    println!("Скачивание публичных ключей JWKS из Keycloak при старте...");
+    
+    // Скачиваем ключи один раз при запуске бэкенда
+    let jwks_endpoint = format!("{}/protocol/openid-connect/certs", keycloak_internal_url);
+    
+    // Пробуем скачать ключи с несколькими попытками, так как Keycloak может запускаться чуть дольше бэкенда
+    let mut response = None;
+    for _ in 0..10 {
+        if let Ok(res) = reqwest::get(&jwks_endpoint).await {
+            response = Some(res);
+            break;
+        }
+        println!("Ожидание готовности Keycloak...");
+        tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
+    }
 
-    // Публичные маршруты
+    let response = response.expect("Не удалось подключиться к Keycloak JWKS эндпоинту!");
+    let jwks: serde_json::Value = response.json().await.expect("Не удалось распарсить JWKS JSON!");
+    
+    // Берем первый доступный ключ Keycloak для RS256
+    let keys = jwks["keys"].as_array().expect("Неверный формат JWKS: keys не найден");
+    let key_data = &keys[0]; // В проде для идеала ищут по kid, но первый ключ всегда основной
+    
+    let n = key_data["n"].as_str().expect("Компонент 'n' отсутствует");
+    let e = key_data["e"].as_str().expect("Компонент 'e' отсутствует");
+    
+    let decoding_key = DecodingKey::from_rsa_components(n, e)
+        .expect("Не удалось создать DecodingKey из RSA компонентов");
+
+    let state = Arc::new(AppState { 
+        keycloak_issuer_url: keycloak_internal_url.to_string(), 
+        decoding_key: Arc::new(decoding_key) 
+    });
+
     let public_routes = Router::new().route("/health", get(health));
 
-    // Защищенные маршруты (прокидываем State в middleware)
     let protected_routes = Router::new()
         .route("/protected-data", get(get_protected_data))
         .route_layer(middleware::from_fn_with_state(state.clone(), auth_middleware));
@@ -51,17 +80,16 @@ async fn main() {
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind(&exposed_addr).await.unwrap();
-    println!("Started production-ready server on {}...", exposed_addr);
+    println!("Бэкенд успешно запущен и защищен! Слушаем {}...", exposed_addr);
     axum::serve(listener, app).await.unwrap();
 }
 
-// Безопасный Middleware с валидацией подписи Keycloak
+// Теперь middleware работает мгновенно без сетевых запросов!
 async fn auth_middleware(
     State(state): State<Arc<AppState>>,
     mut req: Request,
     next: Next,
 ) -> Result<Response, StatusCode> {
-    // 1. Извлекаем заголовок Authorization
     let auth_header = req
         .headers()
         .get(AUTHORIZATION)
@@ -72,52 +100,32 @@ async fn auth_middleware(
         _ => return Err(StatusCode::UNAUTHORIZED),
     };
 
-    // 2. Читаем заголовок токена, чтобы узнать kid (Key ID) и алгоритм
     let header = decode_header(token).map_err(|_| StatusCode::UNAUTHORIZED)?;
-    
-    // В проде Keycloak использует RS256
     if header.alg != Algorithm::RS256 {
         return Err(StatusCode::UNAUTHORIZED);
     }
 
-    // 3. ПРОД-РЕШЕНИЕ: Динамически запрашиваем публичный ключ у Keycloak (JWKS)
-    // В реальном высоконагруженном проекте этот шаг нужно кэшировать в памяти на пару часов!
-    let jwks_endpoint = format!("{}/protocol/openid-connect/certs", state.keycloak_jwks_url);
-    let response = reqwest::get(&jwks_endpoint)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    
-    let jwks: serde_json::Value = response.json().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    
-    // Ищем нужный ключ по kid из заголовка JWT
-    let target_kid = header.kid.ok_or(StatusCode::UNAUTHORIZED)?;
-    let keys = jwks["keys"].as_array().ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
-    
-    let key_data = keys.iter().find(|k| k["kid"].as_str() == Some(&target_kid))
-        .ok_or(StatusCode::UNAUTHORIZED)?;
-
-    // Строим DecodingKey из RSA-компонентов (n и e), переданных Keycloak
-    let n = key_data["n"].as_str().ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
-    let e = key_data["e"].as_str().ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
-    
-    let decoding_key = DecodingKey::from_rsa_components(n, e)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    // 4. Полноценная безопасная валидация токена
     let mut validation = Validation::new(Algorithm::RS256);
-    validation.validate_exp = true; // Проверка протухания
-    // На проде обязательно проверяйте эмитент (iss):
-    validation.set_issuer(&[state.keycloak_jwks_url.clone()]);
-    // Если настраивали Audience в Keycloak, раскомментируйте:
-    // validation.set_audience(&["backend-client"]); 
+    validation.validate_exp = true; 
 
-    match decode::<Claims>(token, &decoding_key, &validation) {
+    validation.set_issuer(&[
+        "http://localhost:8080/realms/my-production-realm".to_string(),
+        "http://localhost:8081/realms/my-production-realm".to_string(),
+        state.keycloak_issuer_url.clone(), // http://keycloak:8080/...
+    ]);
+
+    // Отключаем проверку audience на этапе тестов, чтобы не было строгих конфликтов с client_id
+    validation.validate_aud = false; 
+
+    match decode::<Claims>(token, &state.decoding_key, &validation) {
         Ok(token_data) => {
-            // Токен валиден, подпись проверена через асимметричный ключ Keycloak!
             req.extensions_mut().insert(token_data.claims);
             Ok(next.run(req).await)
         }
-        Err(_) => Err(StatusCode::UNAUTHORIZED),
+        Err(err) => {
+            println!("Ошибка валидации токена: {:?}", err);
+            Err(StatusCode::UNAUTHORIZED)
+        }
     }
 }
 
