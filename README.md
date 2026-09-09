@@ -82,7 +82,7 @@ redirect_uri=http://localhost:3000/callback
 ```
 
 Result: 
-```
+```JSON
 {
     "access_token": "eyJhbGciOiJSUzI1NiIsInR5cCIgOiAiSldUIiwia2lkIiA6ICJtTm9NUVJWd2FUZkFOZ3VtQnZSUE5EdHhfLWxQZ21oR3J6X1o3OTNtYTNZIn0.eyJleHAiOjE3ODg5ODcwMzUsImlhdCI6MTc4ODk4NjczNSwiYXV0aF90aW1lIjoxNzg4OTg2NDMwLCJqdGkiOiJvbnJ0YWM6NGZhMzg2NTQtZTI0OC1jOTliLWUzMWYtMTY1YjQ3NTJlMDYwIiwiaXNzIjoiaHR0cDovL2xvY2FsaG9zdDo4MDgwL3JlYWxtcy9zYW1wbGVfcHJvamVjdF9yZWFsbSIsImF1ZCI6ImFjY291bnQiLCJzdWIiOiJiOGJlYjBmYS04N2NiLTRlMmMtODcxMi1mOTNiMjM5MDYzMTEiLCJ0eXAiOiJCZWFyZXIiLCJhenAiOiJmcm9udGVuZCIsInNpZCI6IjZmMGM3OWIzLTVkNjEtNDA1Mi1iYmFiLWJmODFhZWY1NDUyYiIsImFjciI6IjAiLCJhbGxvd2VkLW9yaWdpbnMiOlsiaHR0cDovL2xvY2FsaG9zdDozMDAwIl0sInJlYWxtX2FjY2VzcyI6eyJyb2xlcyI6WyJkZWZhdWx0LXJvbGVzLXNhbXBsZV9wcm9qZWN0X3JlYWxtIiwib2ZmbGluZV9hY2Nlc3MiLCJ1bWFfYXV0aG9yaXphdGlvbiJdfSwicmVzb3VyY2VfYWNjZXNzIjp7ImFjY291bnQiOnsicm9sZXMiOlsibWFuYWdlLWFjY291bnQiLCJtYW5hZ2UtYWNjb3VudC1saW5rcyIsInZpZXctcHJvZmlsZSJdfX0sInNjb3BlIjoib3BlbmlkIHByb2ZpbGUgZW1haWwiLCJlbWFpbF92ZXJpZmllZCI6ZmFsc2UsIm5hbWUiOiJpdmFuIGl2YW5vdiIsInByZWZlcnJlZF91c2VybmFtZSI6Iml2YW4iLCJnaXZlbl9uYW1lIjoiaXZhbiIsImZhbWlseV9uYW1lIjoiaXZhbm92IiwiZW1haWwiOiJpdmFuQGV4YW1wbGUuY29tIn0.ONVd-7GRxontcjUY-irs6RDS-YYkj38_69G5gme_GMq3QItOV4uxeHrjijfSxyRrhb9rjxVWYDsA3npgJAyPg6UH2t7tBPNJkh2oxh8TjvDiDI-Gjltuu5Kc6gdQklWpiOtVGNL2AUOpMid-lFdeU_jQUJ_cU3QaVgLgLdb_vdq4MGOhlBWSgK3cSrXH38kXEicTkT8K0a1cKOjaa-77vW_F5CgjcUDUM_iVwwlPkwsyolKGuwFdq-BpF-8orgm4txbAi8dwo4JjwyhEWDSYRymXg6rGlUnpoBhi0Q9xQQgPZYJt5tTHD_5LXT3NoVA6yyPZ6b8ZAe0fuJEFtO4vMg",
     "expires_in": 300,
@@ -106,3 +106,57 @@ If
 ```
 
 go again from point 6.
+
+13. Access_token may be decoded by https://www.jwt.io/
+
+
+```JSON
+Header
+{
+  "alg": "RS256",
+  "typ": "JWT",
+  "kid": "mNoMQRVwaTfANgumBvRPNDtx_-lPgmhGrz_Z793ma3Y"
+}
+Payload
+{
+  "exp": 1788987035,
+  "iat": 1788986735,
+  "auth_time": 1788986430,
+  "jti": "onrtac:4fa38654-e248-c99b-e31f-165b4752e060",
+  "iss": "http://localhost:8080/realms/sample_project_realm",
+  "aud": "account",
+  "sub": "b8beb0fa-87cb-4e2c-8712-f93b23906311",
+  "typ": "Bearer",
+  "azp": "frontend",
+  "sid": "6f0c79b3-5d61-4052-bbab-bf81aef5452b",
+  "acr": "0",
+  "allowed-origins": [
+    "http://localhost:3000"
+  ],
+  "realm_access": {
+    "roles": [
+      "default-roles-sample_project_realm",
+      "offline_access",
+      "uma_authorization"
+    ]
+  },
+  "resource_access": {
+    "account": {
+      "roles": [
+        "manage-account",
+        "manage-account-links",
+        "view-profile"
+      ]
+    }
+  },
+  "scope": "openid profile email",
+  "email_verified": false,
+  "name": "ivan ivanov",
+  "preferred_username": "ivan",
+  "given_name": "ivan",
+  "family_name": "ivanov",
+  "email": "ivan@example.com"
+}
+Signature
+...
+```
