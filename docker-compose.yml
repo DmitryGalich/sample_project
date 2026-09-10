@@ -1,4 +1,18 @@
 services:
+  gateway:
+    image: nginx:1.27
+    container_name: gateway
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    volumes:
+      - ./gateway/nginx.conf:/etc/nginx/nginx.conf:ro
+    networks:
+      - internal_network
+    depends_on:
+      - backend
+      - keycloak
+
   keycloak_db:
     image: postgres:16-alpine
     container_name: keycloak_db
