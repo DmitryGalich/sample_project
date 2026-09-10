@@ -39,7 +39,8 @@ async fn main() {
     let shared_state = std::sync::Arc::new(AppState { jwks });
 
     let app = axum::Router::new()
-        .route("/api/protected", axum::routing::get(protected_handler))
+        .route("/health", axum::routing::get(protected_handler))
+        .route("/protected", axum::routing::get(protected_handler))
         .with_state(shared_state);
 
     let url: &str = "0.0.0.0:8000";
@@ -48,6 +49,15 @@ async fn main() {
     println!("Started on {}", url);
 
     axum::serve(listener, app).await.unwrap();
+}
+
+async fn health_handler(
+    axum::extract::State(state): axum::extract::State<std::sync::Arc<AppState>>,
+    headers: axum::http::HeaderMap,
+) -> Result<String, axum::http::StatusCode> {
+        Ok(format!(
+        "Backend health"
+    ))
 }
 
 async fn protected_handler(
@@ -94,6 +104,8 @@ async fn protected_handler(
             println!("Validation error: {:?}", e);
             axum::http::StatusCode::UNAUTHORIZED
         })?;
+
+    println!("{} (ID: {})", token_data.claims.preferred_username, token_data.claims.sub);
 
     // Если мы дошли сюда — подпись верна, токен не изменен, время жизни проверено!
     Ok(format!(
