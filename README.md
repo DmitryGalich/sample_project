@@ -196,3 +196,145 @@ Signature
 }
 ```
 
+15. Backend:
+
+``` yaml
+services:
+  keycloak_db:
+    image: postgres:16-alpine
+    container_name: keycloak_db
+    restart: unless-stopped
+
+    environment:
+      POSTGRES_DB: keycloak_db
+      POSTGRES_USER: keycloak_db_user
+      POSTGRES_PASSWORD: keycloak_db_password
+
+    volumes:
+      - keycloak_db_data:/var/lib/postgresql/data
+
+    networks:
+      - internal_network
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.3
+    container_name: keycloak
+
+    command:
+      - start-dev
+
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://keycloak_db:5432/keycloak_db
+      KC_DB_USERNAME: keycloak_db_user
+      KC_DB_PASSWORD: keycloak_db_password
+
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin_password
+
+    ports:
+      - "8080:8080"
+
+    networks:
+      - internal_network
+
+    depends_on:
+      - keycloak_db
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.dev
+    container_name: backend
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    volumes:
+      - .:/workspace
+      - cargo_cache:/usr/local/cargo/registry
+    networks:
+      - internal_network
+    command: sleep infinity
+    depends_on:
+      - keycloak
+
+volumes:
+  keycloak_db_data:
+  cargo_cache:
+
+networks:
+  internal_network:
+
+```
+
+``` dockerfile
+FROM rust:1.88
+
+RUN apt-get update && apt-get install -y \
+    protobuf-compiler \
+    curl \
+    pkg-config \
+    libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN rustup component add clippy rustfmt
+
+RUN cargo install sqlx-cli --version 0.7.4 --no-default-features --features native-tls,postgres 
+
+WORKDIR /workspace
+```
+
+``` rust
+use axum::{
+    http::{header::AUTHORIZATION, StatusCode},
+    routing::get,
+    Router,
+};
+
+
+#[tokio::main]
+async fn main() {
+    let app = Router::new()
+        .route("/api/protected", get(protected_handler));
+
+    let listener = tokio::net::TcpListener::bind("0.0.0.0:8000").await.unwrap();
+    println!("Started on 8000");
+    axum::serve(listener, app).await.unwrap();
+}
+
+async fn protected_handler(
+    headers: axum::http::HeaderMap,
+) -> Result<String, StatusCode> {
+    let auth_header = headers
+        .get(AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .ok_or(StatusCode::UNAUTHORIZED)?;
+
+    if !auth_header.starts_with("Bearer ") {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+
+    let token = &auth_header["Bearer ".len()..];
+    
+    println!("Token: {}", token);
+
+    Ok(format!("Token isn't tested yet"))
+}
+```
+
+GET: http://localhost:8000/api/protected with Header
+| Key | Value |
+| -------- | ------- |
+| Authorization | Bearer BIBA |
+
+
+Backend console:
+```
+Started on 8000
+Token: biba
+```
+
+Client console:
+```
+Token received but untested
+```

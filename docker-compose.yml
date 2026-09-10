@@ -40,9 +40,26 @@ services:
     depends_on:
       - keycloak_db
 
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.dev
+    container_name: backend
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    volumes:
+      - .:/workspace
+      - cargo_cache:/usr/local/cargo/registry
+    networks:
+      - internal_network
+    command: sleep infinity
+    depends_on:
+      - keycloak
 
 volumes:
   keycloak_db_data:
+  cargo_cache:
 
 networks:
   internal_network:
