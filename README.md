@@ -160,3 +160,39 @@ Payload
 Signature
 ...
 ```
+
+14. JWKS (JSON Web Key Set): http://localhost:8080/realms/sample_project_realm/protocol/openid-connect/certs
+
+```JSON
+{
+    "keys": [
+        {
+            "kid": "mNoMQRVwaTfANgumBvRPNDtx_-lPgmhGrz_Z793ma3Y",
+            "kty": "RSA",
+            "alg": "RS256",
+            "use": "sig",
+            "x5c": [
+                "MIICtzCCAZ8CBgGgh9jbFjANBgkqhkiG9w0BAQsFADAfMR0wGwYDVQQDDBRzYW1wbGVfcHJvamVjdF9yZWFsbTAeFw0yNjA5MDkyMDIzNTFaFw0zNjA5MDkyMDI1MzFaMB8xHTAbBgNVBAMMFHNhbXBsZV9wcm9qZWN0X3JlYWxtMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAn8T3MXvjJgh0h0b9Eiy8dE5QHOz9duTKdDgFQ191ePTDQAIqEOSO6MJa01sfi8dNHIf80SfB0H1vOt/RvctHt8NHA8T41injb+YLuqPbWOPW5J6+Q3BXCYx3W6nosPV+/2AQ1bQBKfhRX7Es+yz+KDOimiL/8jjOgh/HW3lUTMq5Bvg4yJSlKpafi3G4rjcD9oixBjJs/kFdTa1XGM5nBISvgtw+VUf0joUZuS9gpCjU/xSQA3CJl1uuHwRJKdLceYnBrBznkp3/SyCZs9NRZB/C3tgpf7MjiKGUBLLDz8Myi2xCdd1rIr6nMaAq2yPFtmKXRCvN30FLnTq6OCHKtwIDAQABMA0GCSqGSIb3DQEBCwUAA4IBAQBR4BhaEby3oA6+jqVoD0NuJpyBDh6cW9AxytP4a48DxAFJTr5i2tVg5gZAiiaPgRPGsHc2mV8YxH0DFN/2soYFKW1woTytf5q4O5p7AA7oOGBs55KuDqfJPXXDoBe4B+4pjp+VLgkPJJGk+N4Qte8E80Ws0ffMouSKlwKZo+Feo6qcrzgs0UPJWpcQRZfo2rzdOVnLcINWI8vYkEXLOoVVgVk/yHL8px6/OXkoQTqFV8AfkAPY+tMy3T21QeTLwr4WwRNuaYjKB+rMDlszRHQUu/7A8lSxS1nxH8etqW2vM4u0OXKqCNt/p3738z/SYMewEPIGHuXZvggOJMlqZIZQ"
+            ],
+            "x5t": "5Mq_jwFDAIfvrHaxqywsTWDctxQ",
+            "x5t#S256": "tI5dt2QhiDqmxOsXTH27SPM8LVCktPS0sRx-jGr9Pwg",
+            "n": "n8T3MXvjJgh0h0b9Eiy8dE5QHOz9duTKdDgFQ191ePTDQAIqEOSO6MJa01sfi8dNHIf80SfB0H1vOt_RvctHt8NHA8T41injb-YLuqPbWOPW5J6-Q3BXCYx3W6nosPV-_2AQ1bQBKfhRX7Es-yz-KDOimiL_8jjOgh_HW3lUTMq5Bvg4yJSlKpafi3G4rjcD9oixBjJs_kFdTa1XGM5nBISvgtw-VUf0joUZuS9gpCjU_xSQA3CJl1uuHwRJKdLceYnBrBznkp3_SyCZs9NRZB_C3tgpf7MjiKGUBLLDz8Myi2xCdd1rIr6nMaAq2yPFtmKXRCvN30FLnTq6OCHKtw",
+            "e": "AQAB"
+        },
+        {
+            "kid": "fuW1D5BjPoenyg9_k77vuuaWrUP-3tNjDo6PUwwd5ZI",
+            "kty": "RSA",
+            "alg": "RSA-OAEP",
+            "use": "enc",
+            "x5c": [
+                "MIICtzCCAZ8CBgGgh9jcajANBgkqhkiG9w0BAQsFADAfMR0wGwYDVQQDDBRzYW1wbGVfcHJvamVjdF9yZWFsbTAeFw0yNjA5MDkyMDIzNTFaFw0zNjA5MDkyMDI1MzFaMB8xHTAbBgNVBAMMFHNhbXBsZV9wcm9qZWN0X3JlYWxtMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAwNxF9tdxcQqqf8c+rJ0wa8R2wcfgdILzANxKUQtlwck+d/M6K59BzBDELS6H/dEpECSpoqIScuZAqkZ4ocWJQW+O3Ja864Fp69uluninLiYlTiCVkb7P9kffMbW7SMseghIjFJbzv3QXD5hiqiWMSR6wVXCzl7FVzLQBSvava2guezzdYXnTrXXD+mPNYVATi3yU5tugtHePQeG736ssnhokC+xPsTXVWn98rxvdKjQlg4Wml94dwOUdSBOwWMaPZax9OIxSE3mGGXLMEhJ092WIQtc5SMpPzidgBwFnGmUzRrVXMgZXY6Vxj27DPLBjq+6t3odEjYxFsdgZ1V3fuwIDAQABMA0GCSqGSIb3DQEBCwUAA4IBAQAXVtZCPzgZvJnrwtmFHJExXWyFltoa+wsKScxxAvM5xzqIPzL1d+MVQntWl/Faz3aL6Z8t6Fmo6IrjNjpbvIfCbeDFkFP8Dy0bF3tf/uRLNs534givU7ouwPQPoDX4OQ3dlUjF73ZxOZZU6TW8NChlB6BqibxVBQZoOtS5/77W6QpiuLP51SnrQ7oBlqSJV3XerCBZrV/eiz2Croqfb2XUgm5ki7cuE67BHnAWhBXN3gqVI0K7zjIfrCLNQQaN/fDK5vwthn3c6S9qB3USF2zcEpu9jLuVSO/s6ccBPgb5BRVUY9ZCOrTb2piq3N57cIGN9M5Y9EGZUSQdR0JaWr+B"
+            ],
+            "x5t": "xCMj2jPBk4Cd_lFjZnAaZzbjxsw",
+            "x5t#S256": "29l0N0z1BJeRYNeVWxda1wTEzf-jlhTN_5RNelUK_KY",
+            "n": "wNxF9tdxcQqqf8c-rJ0wa8R2wcfgdILzANxKUQtlwck-d_M6K59BzBDELS6H_dEpECSpoqIScuZAqkZ4ocWJQW-O3Ja864Fp69uluninLiYlTiCVkb7P9kffMbW7SMseghIjFJbzv3QXD5hiqiWMSR6wVXCzl7FVzLQBSvava2guezzdYXnTrXXD-mPNYVATi3yU5tugtHePQeG736ssnhokC-xPsTXVWn98rxvdKjQlg4Wml94dwOUdSBOwWMaPZax9OIxSE3mGGXLMEhJ092WIQtc5SMpPzidgBwFnGmUzRrVXMgZXY6Vxj27DPLBjq-6t3odEjYxFsdgZ1V3fuw",
+            "e": "AQAB"
+        }
+    ]
+}
+```
+
