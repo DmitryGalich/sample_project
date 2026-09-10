@@ -1,11 +1,13 @@
-#[derive(Debug, serde::Deserialize)]
-struct Jwk {
-    kid: String,
-    n: String,
-    e: String,
-}
+use axum::{
+    http::{header::AUTHORIZATION, StatusCode},
+    routing::get,
+    Router,
+};
+use jsonwebtoken::{decode, decode_header, DecodingKey, Validation, Algorithm};
+use serde::{Deserialize, Serialize};
+use std::sync::{Arc, RwLock};
 
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 struct Claims {
     sub: String,
     preferred_username: String,
@@ -13,103 +15,117 @@ struct Claims {
     exp: u64,
 }
 
-#[derive(Debug, serde::Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
+struct Jwk {
+    kid: String,
+    n: String,
+    e: String,
+}
+
+#[derive(Debug, Deserialize, Clone)]
 struct Jwks {
     keys: Vec<Jwk>,
 }
 
+// 1. Теперь JWKS внутри состояния обернут в RwLock (аналог std::shared_mutex в C++)
 struct AppState {
-    jwks: Jwks,
+    jwks_url: &'static str,
+    jwks: RwLock<Jwks>,
+}
+
+// Вспомогательная функция для скачивания ключей с Keycloak
+async fn fetch_jwks(url: &str) -> Result<Jwks, StatusCode> {
+    reqwest::get(url)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .json::<Jwks>()
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
 #[tokio::main]
 async fn main() {
-    let jwks_url: &str =
-        "http://keycloak:8080/realms/sample_project_realm/protocol/openid-connect/certs";
-    println!("Loading public keys from {}", jwks_url);
+    let jwks_url = "http://keycloak:8080/realms/sample_project_realm/protocol/openid-connect/certs";
+    
+    println!("⏳ Стартовая загрузка публичных ключей из Keycloak...");
+    let initial_jwks = fetch_jwks(jwks_url).await.expect("Критическая ошибка: Keycloak недоступен при старте.");
+    println!("✅ Успешно загружено ключей: {}", initial_jwks.keys.len());
 
-    let jwks: Jwks = reqwest::get(jwks_url)
-        .await
-        .expect("Connecting error")
-        .json()
-        .await
-        .expect("Parsing error JWKS");
-    println!("Keys downloaded: {}", jwks.keys.len());
+    // Создаем общее состояние, доступное всем потокам веб-сервера
+    let shared_state = Arc::new(AppState {
+        jwks_url,
+        jwks: RwLock::new(initial_jwks),
+    });
 
-    let shared_state = std::sync::Arc::new(AppState { jwks });
-
-    let app = axum::Router::new()
-        .route("/health", axum::routing::get(protected_handler))
-        .route("/protected", axum::routing::get(protected_handler))
+    let app = Router::new()
+        .route("/protected", get(protected_handler))
         .with_state(shared_state);
 
-    let url: &str = "0.0.0.0:8000";
-
-    let listener = tokio::net::TcpListener::bind(url).await.unwrap();
-    println!("Started on {}", url);
-
+    let listener = tokio::net::TcpListener::bind("0.0.0.0:8000").await.unwrap();
+    println!("🚀 Rust-бэкенд готов к ротации ключей на порту 8000");
     axum::serve(listener, app).await.unwrap();
 }
 
-async fn health_handler(
-    axum::extract::State(state): axum::extract::State<std::sync::Arc<AppState>>,
-    headers: axum::http::HeaderMap,
-) -> Result<String, axum::http::StatusCode> {
-        Ok(format!(
-        "Backend health"
-    ))
-}
-
 async fn protected_handler(
-    axum::extract::State(state): axum::extract::State<std::sync::Arc<AppState>>,
+    axum::extract::State(state): axum::extract::State<Arc<AppState>>,
     headers: axum::http::HeaderMap,
-) -> Result<String, axum::http::StatusCode> {
+) -> Result<String, StatusCode> {
+    
     let auth_header = headers
-        .get(axum::http::header::AUTHORIZATION)
+        .get(AUTHORIZATION)
         .and_then(|value| value.to_str().ok())
-        .ok_or(axum::http::StatusCode::UNAUTHORIZED)?;
+        .ok_or(StatusCode::UNAUTHORIZED)?;
 
     if !auth_header.starts_with("Bearer ") {
-        return Err(axum::http::StatusCode::UNAUTHORIZED);
+        return Err(StatusCode::UNAUTHORIZED);
     }
-
     let token = &auth_header["Bearer ".len()..];
 
-    // Шаг A: Декодируем Header токена без проверки подписи, чтобы узнать `kid`
-    let header =
-        jsonwebtoken::decode_header(token).map_err(|_| axum::http::StatusCode::UNAUTHORIZED)?;
-    let token_kid = header.kid.ok_or(axum::http::StatusCode::UNAUTHORIZED)?;
+    // Шаг А: Быстро декодируем Header токена, чтобы узнать `kid`
+    let header = decode_header(token).map_err(|_| StatusCode::UNAUTHORIZED)?;
+    let token_kid = header.kid.ok_or(StatusCode::UNAUTHORIZED)?;
 
-    // Шаг B: Ищем ключ с таким же `kid` в нашем кэше (AppState)
-    let target_jwk = state
-        .jwks
-        .keys
-        .iter()
-        .find(|jwk| jwk.kid == token_kid)
-        .ok_or(axum::http::StatusCode::UNAUTHORIZED)?;
+    // Шаг B: Пытаемся найти ключ в кэше в режиме READ (параллельный shared_lock)
+    let mut found_jwk = {
+        let jwks_guard = state.jwks.read().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        jwks_guard.keys.iter().find(|jwk| jwk.kid == token_kid).cloned()
+    };
 
-    // Шаг C: Создаем криптографический ключ из компонентов RSA (n и e)
-    let decoding_key = jsonwebtoken::DecodingKey::from_rsa_components(&target_jwk.n, &target_jwk.e)
-        .map_err(|_| axum::http::StatusCode::INTERNAL_SERVER_ERROR)?;
+    // Шаг C: ИНТЕНСИВНАЯ РОТАЦИЯ (Cache Miss)
+    // Если ключа в памяти нет, значит в Keycloak могла пройти ротация!
+    if found_jwk.is_none() {
+        println!("⚠️ Ключ с kid='{}' не найден в кэше. Пробую обновить JWKS...", token_kid);
+        
+        // Скачиваем свежие ключи из Keycloak "вживую"
+        let fresh_jwks = fetch_jwks(state.jwks_url).await?;
+        
+        // Блокируем кэш на ЗАПИСЬ (эксклюзивный unique_lock), чтобы обновить данные
+        let mut jwks_guard = state.jwks.write().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        *jwks_guard = fresh_jwks; // Перезаписываем старый кэш новым списком
+        
+        // Ищем ключ в уже обновленном списке
+        found_jwk = jwks_guard.keys.iter().find(|jwk| jwk.kid == token_kid).cloned();
+        println!("🔄 Кэш ключей успешно обновлен.");
+    }
 
-    // Шаг D: Настраиваем правила валидации.
-    // Keycloak по умолчанию использует алгоритм RS256.
-    let mut validation = jsonwebtoken::Validation::new(jsonwebtoken::Algorithm::RS256);
-    // Для простоты на данном этапе отключаем строгую проверку Audience (её разберем на Этапе 12)
-    validation.validate_aud = false;
+    // Если ключа нет даже после обновления — токен точно фейковый или от другого реалма
+    let target_jwk = found_jwk.ok_or(StatusCode::UNAUTHORIZED)?;
 
-    // Шаг E: Производим математическую верификацию подписи токена!
-    let token_data =
-        jsonwebtoken::decode::<Claims>(token, &decoding_key, &validation).map_err(|e| {
-            println!("Validation error: {:?}", e);
-            axum::http::StatusCode::UNAUTHORIZED
+    // Шаг D: Математическая валидация подписи (как на Прошлом Этапе)
+    let decoding_key = DecodingKey::from_rsa_components(&target_jwk.n, &target_jwk.e)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let mut validation = Validation::new(Algorithm::RS256);
+    validation.validate_aud = false; 
+
+    let token_data = decode::<Claims>(token, &decoding_key, &validation)
+        .map_err(|e| {
+            println!("❌ Ошибка валидации подписи: {:?}", e);
+            StatusCode::UNAUTHORIZED
         })?;
 
-    println!("{} (ID: {})", token_data.claims.preferred_username, token_data.claims.sub);
-
-    // Если мы дошли сюда — подпись верна, токен не изменен, время жизни проверено!
     Ok(format!(
-        "Welcome, {} (ID: {})",
-        token_data.claims.preferred_username, token_data.claims.sub
+        "🔒 Доступ разрешен по протоколу ротации! Привет, {}",
+        token_data.claims.preferred_username
     ))
 }
