@@ -184,7 +184,6 @@ async fn admin_handler(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
 ) -> Result<String, StatusCode> {
-    // Вся базовая валидация токена (копия из protected_handler)
     let auth_header = headers
         .get(AUTHORIZATION)
         .and_then(|value| value.to_str().ok())
@@ -222,17 +221,15 @@ async fn admin_handler(
     let token_data = decode::<Claims>(token, &decoding_key, &validation)
         .map_err(|_| StatusCode::UNAUTHORIZED)?;
 
-    // === ПРОВЕРКА РОЛИ АДМИНИСТРАТОРА ===
     let has_admin_role = token_data.claims.realm_access
         .map(|access| access.roles.contains(&"admin".to_string()))
         .unwrap_or(false);
 
     if !has_admin_role {
-        tracing::warn!("⛔ Отклонено: Пользователь {} пытался зайти в админку без роли 'admin'", token_data.claims.preferred_username);
-        // Возвращаем статус 403 Forbidden — токен валидный, но прав на этот ресурс нет
+        tracing::warn!("Denied: User {} has no right 'admin'", token_data.claims.preferred_username);
         return Err(StatusCode::FORBIDDEN); 
     }
 
-    tracing::info!("👑 Доступ в админку разрешен для: {}", token_data.claims.preferred_username);
-    Ok(format!("👑 Добро пожаловать в секретную админку, О Великий Администратор {}!", token_data.claims.preferred_username))
+    tracing::info!("Access granted: {}", token_data.claims.preferred_username);
+    Ok(format!("Welcome, admin {}!", token_data.claims.preferred_username))
 }
