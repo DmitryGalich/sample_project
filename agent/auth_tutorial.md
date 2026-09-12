@@ -3537,3 +3537,586 @@ async fn admin_handler(
 
 Попробуйте провести этот эксперимент! Удалось ли Ивану легитимно стать администратором и зайти в защищенную панель?
 
+/////////////
+
+use axum::{
+    extract::State,
+    http::{header::AUTHORIZATION, HeaderMap, StatusCode},
+    routing::get,
+    Router,
+};
+use jsonwebtoken::{decode, decode_header, DecodingKey, Validation, Algorithm};
+use serde::{Deserialize, Serialize};
+use std::sync::{Arc, RwLock};
+use std::time::{Instant, Duration};
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct RealmAccess {
+    pub roles: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct Claims {
+    pub sub: String,
+    pub preferred_username: String,
+    pub email: Option<String>,
+    pub exp: u64,
+    pub iss: String,
+    pub realm_access: Option<RealmAccess>, 
+}
+
+#[derive(Debug, Deserialize, Clone)]
+struct Jwk {
+    kid: String,
+    n: String,
+    e: String,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+struct Jwks {
+    keys: Vec<Jwk>,
+}
+
+pub struct ServerConfig {
+    pub jwks_url: String,
+    pub allowed_issuers: Vec<String>,
+    pub allowed_audiences: Vec<String>,
+    pub jwks_min_refresh_interval: Duration,
+}
+
+struct CachedJwks {
+    data: Jwks,
+    last_updated: Instant,
+}
+
+pub struct AppState {
+    config: ServerConfig,
+    jwks: RwLock<CachedJwks>,
+}
+
+async fn fetch_jwks(url: &str) -> Result<Jwks, StatusCode> {
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(3))
+        .build()
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    client.get(url)
+        .send()
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .json::<Jwks>()
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
+
+pub async fn run_server(host_port: &str, config: ServerConfig) {
+    tracing::info!("Initial loading keys from Keycloak...");
+    let initial_jwks = fetch_jwks(&config.jwks_url)
+        .await
+        .expect("Keycloak is not available");
+    
+    tracing::info!("Keys downloaded: {}", initial_jwks.keys.len());
+
+    let shared_state = Arc::new(AppState {
+        config,
+        jwks: RwLock::new(CachedJwks {
+            data: initial_jwks,
+            last_updated: Instant::now(),
+        }),
+    });
+
+    let app = Router::new()
+        .route("/protected", get(protected_handler))
+        .route("/admin/dashboard", get(admin_handler))
+        .with_state(shared_state);
+
+    let listener = tokio::net::TcpListener::bind(host_port).await.unwrap();
+    tracing::info!("Started on {}", host_port);
+    axum::serve(listener, app).await.unwrap();
+}
+
+async fn protected_handler(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<String, StatusCode> {
+    tracing::debug!("New request /protected");
+
+    let auth_header = headers
+        .get(AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .ok_or_else(|| {
+            tracing::warn!("Denied: No `Authorization` header");
+            StatusCode::UNAUTHORIZED
+        })?;
+
+    if !auth_header.starts_with("Bearer ") {
+        tracing::warn!("Denied: No `Bearer` in Header begin");
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+    let token = &auth_header["Bearer ".len()..];
+
+    let header = decode_header(token).map_err(|e| {
+        tracing::error!("Denied: Can't decode token header: {:?}", e);
+        StatusCode::UNAUTHORIZED
+    })?;
+    
+    let token_kid = header.kid.ok_or_else(|| {
+        tracing::warn!("Denied: No 'kid' in token");
+        StatusCode::UNAUTHORIZED
+    })?;
+
+    let mut found_jwk = {
+        let jwks_guard = state.jwks.read().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        jwks_guard.data.keys.iter().find(|jwk| jwk.kid == token_kid).cloned()
+    };
+
+    if found_jwk.is_none() {
+        {
+            let jwks_guard = state.jwks.read().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+            let elapsed = jwks_guard.last_updated.elapsed();
+            
+            if elapsed < state.config.jwks_min_refresh_interval {
+                tracing::warn!(
+                    "Flood control denied request. kid='{}' after {:?}. Min interval: {:?}", 
+                    token_kid, elapsed, state.config.jwks_min_refresh_interval
+                );
+                return Err(StatusCode::UNAUTHORIZED);
+            }
+        }
+
+        tracing::info!("Key with kid='{}' not found in cache. Updating JWKS...", token_kid);
+        let fresh_jwks = fetch_jwks(&state.config.jwks_url).await?;
+        
+        let mut jwks_guard = state.jwks.write().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        jwks_guard.data = fresh_jwks;
+        jwks_guard.last_updated = Instant::now();
+        
+        found_jwk = jwks_guard.data.keys.iter().find(|jwk| jwk.kid == token_kid).cloned();
+        tracing::info!("JWKS updated");
+    }
+
+    let target_jwk = found_jwk.ok_or_else(|| {
+        tracing::warn!("Denied: Key with kid='{}' not found on Keycloak even after update", token_kid);
+        StatusCode::UNAUTHORIZED
+    })?;
+
+    let decoding_key = DecodingKey::from_rsa_components(&target_jwk.n, &target_jwk.e)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let mut validation = Validation::new(Algorithm::RS256);
+    validation.set_issuer(&state.config.allowed_issuers);
+    validation.set_audience(&state.config.allowed_audiences); 
+
+    let token_data = decode::<Claims>(token, &decoding_key, &validation)
+        .map_err(|e| {
+            tracing::error!("Crypto error or old token: {:?}", e);
+            StatusCode::UNAUTHORIZED
+        })?;
+
+    tracing::info!("Access granted for: {}", token_data.claims.preferred_username);
+    
+    Ok(format!(
+        "Access granted! Hello, {}",
+        token_data.claims.preferred_username
+    ))
+}
+
+async fn admin_handler(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<String, StatusCode> {
+    let auth_header = headers
+        .get(AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .ok_or(StatusCode::UNAUTHORIZED)?;
+
+    if !auth_header.starts_with("Bearer ") {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+    let token = &auth_header["Bearer ".len()..];
+
+    let header = decode_header(token).map_err(|_| StatusCode::UNAUTHORIZED)?;
+    let token_kid = header.kid.ok_or(StatusCode::UNAUTHORIZED)?;
+
+    let mut found_jwk = {
+        let jwks_guard = state.jwks.read().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        jwks_guard.data.keys.iter().find(|jwk| jwk.kid == token_kid).cloned()
+    };
+
+    if found_jwk.is_none() {
+        let fresh_jwks = fetch_jwks(&state.config.jwks_url).await?;
+        let mut jwks_guard = state.jwks.write().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        jwks_guard.data = fresh_jwks;
+        jwks_guard.last_updated = Instant::now();
+        found_jwk = jwks_guard.data.keys.iter().find(|jwk| jwk.kid == token_kid).cloned();
+    }
+
+    let target_jwk = found_jwk.ok_or(StatusCode::UNAUTHORIZED)?;
+    let decoding_key = DecodingKey::from_rsa_components(&target_jwk.n, &target_jwk.e)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let mut validation = Validation::new(Algorithm::RS256);
+    validation.set_issuer(&state.config.allowed_issuers);
+    validation.set_audience(&state.config.allowed_audiences); 
+
+    let token_data = decode::<Claims>(token, &decoding_key, &validation)
+        .map_err(|_| StatusCode::UNAUTHORIZED)?;
+
+    let has_admin_role = token_data.claims.realm_access
+        .map(|access| access.roles.contains(&"admin".to_string()))
+        .unwrap_or(false);
+
+    if !has_admin_role {
+        tracing::warn!("Denied: User {} has no right 'admin'", token_data.claims.preferred_username);
+        return Err(StatusCode::FORBIDDEN); 
+    }
+
+    tracing::info!("Access granted: {}", token_data.claims.preferred_username);
+    Ok(format!("Welcome, admin {}!", token_data.claims.preferred_username))
+}
+
+объедини дублирующий код в отдельную функцию
+
+//////////////
+
+Отличная мысль. В текущем виде валидация токена занимает по 40 строк в каждом обработчике. Это классический случай, когда код нужно вынести в общую вспомогательную функцию — прямо как в C++ [^1].
+Мы создадим приватную функцию validate_token, которая принимает state и заголовки, а возвращает валидные криптографически проверенные данные Claims [^2]. Если что-то пойдет не так, она вернет ошибку StatusCode.
+## Обновленный backend/src/server.rs
+Замените содержимое вашего файла на этот чистый вариант. Весь дублирующийся код теперь инкапсулирован в одной функции, а обработчики стали тонкими и сфокусированными только на своей бизнес-логике:
+
+use axum::{
+    extract::State,
+    http::{header::AUTHORIZATION, HeaderMap, StatusCode},
+    routing::get,
+    Router,
+};use jsonwebtoken::{decode, decode_header, DecodingKey, Validation, Algorithm};use serde::{Deserialize, Serialize};use std::sync::{Arc, RwLock};use std::time::{Instant, Duration};
+
+#[derive(Debug, Serialize, Deserialize, Clone)]pub struct RealmAccess {
+    pub roles: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]pub struct Claims {
+    pub sub: String,
+    pub preferred_username: String,
+    pub email: Option<String>,
+    pub exp: u64,
+    pub iss: String,
+    pub realm_access: Option<RealmAccess>, 
+}
+
+#[derive(Debug, Deserialize, Clone)]struct Jwk {
+    kid: String,
+    n: String,
+    e: String,
+}
+
+#[derive(Debug, Deserialize, Clone)]struct Jwks {
+    keys: Vec<Jwk>,
+}
+pub struct ServerConfig {
+    pub jwks_url: String,
+    pub allowed_issuers: Vec<String>,
+    pub allowed_audiences: Vec<String>,
+    pub jwks_min_refresh_interval: Duration,
+}
+struct CachedJwks {
+    data: Jwks,
+    last_updated: Instant,
+}
+pub struct AppState {
+    config: ServerConfig,
+    jwks: RwLock<CachedJwks>,
+}
+async fn fetch_jwks(url: &str) -> Result<Jwks, StatusCode> {
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(3))
+        .build()
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    client.get(url)
+        .send()
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .json::<Jwks>()
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
+pub async fn run_server(host_port: &str, config: ServerConfig) {
+    tracing::info!("Initial loading keys from Keycloak...");
+    let initial_jwks = fetch_jwks(&config.jwks_url)
+        .await
+        .expect("Keycloak is not available");
+    
+    tracing::info!("Keys downloaded: {}", initial_jwks.keys.len());
+
+    let shared_state = Arc::new(AppState {
+        config,
+        jwks: RwLock::new(CachedJwks {
+            data: initial_jwks,
+            last_updated: Instant::now(),
+        }),
+    });
+
+    let app = Router::new()
+        .route("/protected", get(protected_handler))
+        .route("/admin/dashboard", get(admin_handler))
+        .with_state(shared_state);
+
+    let listener = tokio::net::TcpListener::bind(host_port).await.unwrap();
+    tracing::info!("Started on {}", host_port);
+    axum::serve(listener, app).await.unwrap();
+}
+/// Вспомогательная функция для полной валидации JWT токена./// Извлекает заголовок, сверяет kid, при необходимости обновляет кэш JWKS и проверяет подпись.async fn validate_token(state: &AppState, headers: &HeaderMap) -> Result<Claims, StatusCode> {
+    let auth_header = headers
+        .get(AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .ok_or_else(|| {
+            tracing::warn!("Denied: No `Authorization` header");
+            StatusCode::UNAUTHORIZED
+        })?;
+
+    if !auth_header.starts_with("Bearer ") {
+        tracing::warn!("Denied: No `Bearer` in Header begin");
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+    let token = &auth_header["Bearer ".len()..];
+
+    let header = decode_header(token).map_err(|e| {
+        tracing::error!("Denied: Can't decode token header: {:?}", e);
+        StatusCode::UNAUTHORIZED
+    })?;
+    
+    let token_kid = header.kid.ok_or_else(|| {
+        tracing::warn!("Denied: No 'kid' in token");
+        StatusCode::UNAUTHORIZED
+    })?;
+
+    let mut found_jwk = {
+        let jwks_guard = state.jwks.read().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        jwks_guard.data.keys.iter().find(|jwk| jwk.kid == token_kid).cloned()
+    };
+
+    if found_jwk.is_none() {
+        {
+            let jwks_guard = state.jwks.read().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+            let elapsed = jwks_guard.last_updated.elapsed();
+            
+            if elapsed < state.config.jwks_min_refresh_interval {
+                tracing::warn!(
+                    "Flood control denied request. kid='{}' after {:?}. Min interval: {:?}", 
+                    token_kid, elapsed, state.config.jwks_min_refresh_interval
+                );
+                return Err(StatusCode::UNAUTHORIZED);
+            }
+        }
+
+        tracing::info!("Key with kid='{}' not found in cache. Updating JWKS...", token_kid);
+        let fresh_jwks = fetch_jwks(&state.config.jwks_url).await?;
+        
+        let mut jwks_guard = state.jwks.write().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        jwks_guard.data = fresh_jwks;
+        jwks_guard.last_updated = Instant::now();
+        
+        found_jwk = jwks_guard.data.keys.iter().find(|jwk| jwk.kid == token_kid).cloned();
+        tracing::info!("JWKS updated");
+    }
+
+    let target_jwk = found_jwk.ok_or_else(|| {
+        tracing::warn!("Denied: Key with kid='{}' not found on Keycloak even after update", token_kid);
+        StatusCode::UNAUTHORIZED
+    })?;
+
+    let decoding_key = DecodingKey::from_rsa_components(&target_jwk.n, &target_jwk.e)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let mut validation = Validation::new(Algorithm::RS256);
+    validation.set_issuer(&state.config.allowed_issuers);
+    validation.set_audience(&state.config.allowed_audiences); 
+
+    let token_data = decode::<Claims>(token, &decoding_key, &validation)
+        .map_err(|e| {
+            tracing::error!("Crypto error or old token: {:?}", e);
+            StatusCode::UNAUTHORIZED
+        })?;
+
+    Ok(token_data.claims)
+}
+async fn protected_handler(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<String, StatusCode> {
+    tracing::debug!("New request /protected");
+
+    // Вызываем единую функцию валидации токена
+    let claims = validate_token(&state, &headers).await?;
+
+    tracing::info!("Access granted for: {}", claims.preferred_username);
+    
+    Ok(format!("Access granted! Hello, {}", claims.preferred_username))
+}
+async fn admin_handler(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<String, StatusCode> {
+    tracing::debug!("New request /admin/dashboard");
+
+    // Вызываем ту же самую функцию валидации токена
+    let claims = validate_token(&state, &headers).await?;
+
+    // Специфичная для админки проверка роли
+    let has_admin_role = claims.realm_access
+        .map(|access| access.roles.contains(&"admin".to_string()))
+        .unwrap_or(false);
+
+    if !has_admin_role {
+        tracing::warn!("Denied: User {} has no right 'admin'", claims.preferred_username);
+        return Err(StatusCode::FORBIDDEN); 
+    }
+
+    tracing::info!("Access granted: {}", claims.preferred_username);
+    Ok(format!("Welcome, admin {}!", claims.preferred_username))
+}
+
+Запустите cargo run и убедитесь, что рефакторинг прошёл успешно. Скрипт по-прежнему должен выдавать токены, а эндпоинты — корректно работать.
+Если теперь с кодом сервера всё идеально, как мы продолжим развивать проект? Мы можем:
+
+* 🗄️ Подключить PostgreSQL к бэкенду на Rust через SQLx и написать первую SQL-миграцию.
+* 🛡️ Или добавить Rate Limiting на стороне Nginx, чтобы разгрузить Rust от шквала запросов злоумышленников на сетевом уровне.
+
+
+//////////////////
+
+админ проверки тоже отдельную функцию
+
+/////////////////
+
+Выносим проверку роли в отдельную функцию. В коммерческой разработке на Rust (и C++) это делается через создание небольших переиспользуемых функций-предикатов, которые принимают ссылку на данные и возвращают bool, либо сразу возвращают ошибку StatusCode.
+Мы напишем функцию require_admin_role(&claims), которая будет инкапсулировать проверку ролей.
+## Обновленный backend/src/server.rs
+Замените нижнюю часть вашего файла backend/src/server.rs (начиная с функции validate_token и до конца файла) на этот чистый вариант. Теперь оба обработчика стали максимально лаконичными:
+
+/// Вспомогательная функция для полной валидации JWT токена./// Извлекает заголовок, сверяет kid, при необходимости обновляет кэш JWKS и проверяет подпись.async fn validate_token(state: &AppState, headers: &HeaderMap) -> Result<Claims, StatusCode> {
+    let auth_header = headers
+        .get(AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .ok_or_else(|| {
+            tracing::warn!("Denied: No `Authorization` header");
+            StatusCode::UNAUTHORIZED
+        })?;
+
+    if !auth_header.starts_with("Bearer ") {
+        tracing::warn!("Denied: No `Bearer` in Header begin");
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+    let token = &auth_header["Bearer ".len()..];
+
+    let header = decode_header(token).map_err(|e| {
+        tracing::error!("Denied: Can't decode token header: {:?}", e);
+        StatusCode::UNAUTHORIZED
+    })?;
+    
+    let token_kid = header.kid.ok_or_else(|| {
+        tracing::warn!("Denied: No 'kid' in token");
+        StatusCode::UNAUTHORIZED
+    })?;
+
+    let mut found_jwk = {
+        let jwks_guard = state.jwks.read().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        jwks_guard.data.keys.iter().find(|jwk| jwk.kid == token_kid).cloned()
+    };
+
+    if found_jwk.is_none() {
+        {
+            let jwks_guard = state.jwks.read().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+            let elapsed = jwks_guard.last_updated.elapsed();
+            
+            if elapsed < state.config.jwks_min_refresh_interval {
+                tracing::warn!(
+                    "Flood control denied request. kid='{}' after {:?}. Min interval: {:?}", 
+                    token_kid, elapsed, state.config.jwks_min_refresh_interval
+                );
+                return Err(StatusCode::UNAUTHORIZED);
+            }
+        }
+
+        tracing::info!("Key with kid='{}' not found in cache. Updating JWKS...", token_kid);
+        let fresh_jwks = fetch_jwks(&state.config.jwks_url).await?;
+        
+        let mut jwks_guard = state.jwks.write().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        jwks_guard.data = fresh_jwks;
+        jwks_guard.last_updated = Instant::now();
+        
+        found_jwk = jwks_guard.data.keys.iter().find(|jwk| jwk.kid == token_kid).cloned();
+        tracing::info!("JWKS updated");
+    }
+
+    let target_jwk = found_jwk.ok_or_else(|| {
+        tracing::warn!("Denied: Key with kid='{}' not found on Keycloak even after update", token_kid);
+        StatusCode::UNAUTHORIZED
+    })?;
+
+    let decoding_key = DecodingKey::from_rsa_components(&target_jwk.n, &target_jwk.e)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let mut validation = Validation::new(Algorithm::RS256);
+    validation.set_issuer(&state.config.allowed_issuers);
+    validation.set_audience(&state.config.allowed_audiences); 
+
+    let token_data = decode::<Claims>(token, &decoding_key, &validation)
+        .map_err(|e| {
+            tracing::error!("Crypto error or old token: {:?}", e);
+            StatusCode::UNAUTHORIZED
+        })?;
+
+    Ok(token_data.claims)
+}
+/// Вспомогательная функция для проверки прав администратора./// Проверяет, содержит ли токен роль "admin". Если нет — возвращает 403 Forbidden.fn require_admin_role(claims: &Claims) -> Result<(), StatusCode> {
+    let has_admin_role = claims.realm_access
+        .as_ref()
+        .map(|access| access.roles.contains(&"admin".to_string()))
+        .unwrap_or(false);
+
+    if !has_admin_role {
+        tracing::warn!("Denied: User {} has no right 'admin'", claims.preferred_username);
+        return Err(StatusCode::FORBIDDEN);
+    }
+
+    Ok(())
+}
+async fn protected_handler(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<String, StatusCode> {
+    tracing::debug!("New request /protected");
+
+    let claims = validate_token(&state, &headers).await?;
+
+    tracing::info!("Access granted for: {}", claims.preferred_username);
+    Ok(format!("Access granted! Hello, {}", claims.preferred_username))
+}
+async fn admin_handler(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<String, StatusCode> {
+    tracing::debug!("New request /admin/dashboard");
+
+    // 1. Проверяем валидность самого токена
+    let claims = validate_token(&state, &headers).await?;
+
+    // 2. Проверяем роль админа через вынесенную функцию
+    require_admin_role(&claims)?;
+
+    tracing::info!("Access granted: {}", claims.preferred_username);
+    Ok(format!("Welcome, admin {}!", claims.preferred_username))
+}
+
+------------------------------
+## Что изменилось?
+Код функций-обработчиков теперь выглядит кристально чистым. Логика авторизации полностью отделена от логики роутинга. Конструкция require_admin_role(&claims)? использует стандартный оператор Rust ?, который автоматически прервет выполнение и вернет ошибку 403 Forbidden, если роли у Ивана не окажется [^1].
+Проверьте проект через cargo run и сделайте контрольный запрос в Postman, чтобы зафиксировать этот рефакторинг.
+Весь код авторизации теперь идеально структурирован. Что мы сделаем на следующем этапе, чтобы продолжить развивать проект?
+
+* Начнем подключать базу данных PostgreSQL через SQLx и настраивать таблицы профилей пользователей?
+* Настроим Rate Limiting в nginx.conf, чтобы защититься от сетевого флуда?
+
+
