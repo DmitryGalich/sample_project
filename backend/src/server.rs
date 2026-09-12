@@ -35,7 +35,7 @@ pub struct ServerConfig {
     pub jwks_url: String,
     pub allowed_issuers: Vec<String>,
     pub allowed_audiences: Vec<String>,
-    pub jwks_min_refresh_interval: Duration, // <-- Добавили в структуру
+    pub jwks_min_refresh_interval: Duration,
 }
 
 struct CachedJwks {
@@ -64,12 +64,12 @@ async fn fetch_jwks(url: &str) -> Result<Jwks, StatusCode> {
 }
 
 pub async fn run_server(host_port: &str, config: ServerConfig) {
-    tracing::info!("⏳ Стартовая загрузка публичных ключей из Keycloak...");
+    tracing::info!("Initial loading keys from Keycloak...");
     let initial_jwks = fetch_jwks(&config.jwks_url)
         .await
-        .expect("Критическая ошибка: Keycloak недоступен при старте.");
+        .expect("Keycloak is not available");
     
-    tracing::info!("✅ Успешно загружено ключей: {}", initial_jwks.keys.len());
+    tracing::info!("Keys downloaded: {}", initial_jwks.keys.len());
 
     let shared_state = Arc::new(AppState {
         config,
@@ -84,7 +84,7 @@ pub async fn run_server(host_port: &str, config: ServerConfig) {
         .with_state(shared_state);
 
     let listener = tokio::net::TcpListener::bind(host_port).await.unwrap();
-    tracing::info!("🚀 Боевой Rust-бэкенд успешно запущен на {}", host_port);
+    tracing::info!("Started on {}", host_port);
     axum::serve(listener, app).await.unwrap();
 }
 
@@ -92,39 +92,37 @@ async fn protected_handler(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
 ) -> Result<String, StatusCode> {
-    tracing::debug!("Получен новый запрос на эндпоинт /protected");
+    tracing::debug!("New request /protected");
 
     let auth_header = headers
         .get(AUTHORIZATION)
         .and_then(|value| value.to_str().ok())
         .ok_or_else(|| {
-            tracing::warn!("Отклонено: Отсутствует заголовок Authorization");
+            tracing::warn!("Denied: No `Authorization` header");
             StatusCode::UNAUTHORIZED
         })?;
 
     if !auth_header.starts_with("Bearer ") {
-        tracing::warn!("Отклонено: Заголовок не начинается с 'Bearer '");
+        tracing::warn!("Denied: No `Bearer` in Header begin");
         return Err(StatusCode::UNAUTHORIZED);
     }
     let token = &auth_header["Bearer ".len()..];
 
     let header = decode_header(token).map_err(|e| {
-        tracing::error!("Отклонено: Не удалось декодировать Header токена: {:?}", e);
+        tracing::error!("Denied: Can't decode token header: {:?}", e);
         StatusCode::UNAUTHORIZED
     })?;
     
     let token_kid = header.kid.ok_or_else(|| {
-        tracing::warn!("Отклонено: В токене отсутствует поле 'kid'");
+        tracing::warn!("Denied: No 'kid' in token");
         StatusCode::UNAUTHORIZED
     })?;
 
-    // Шаг B: Поиск ключа в кэше
     let mut found_jwk = {
         let jwks_guard = state.jwks.read().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
         jwks_guard.data.keys.iter().find(|jwk| jwk.kid == token_kid).cloned()
     };
 
-    // Шаг C: Ротация ключей с динамическим флуд-контролем
     if found_jwk.is_none() {
         {
             let jwks_guard = state.jwks.read().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
@@ -133,14 +131,14 @@ async fn protected_handler(
             // Используем динамический интервал времени из конфигурации!
             if elapsed < state.config.jwks_min_refresh_interval {
                 tracing::warn!(
-                    "🛑 Флуд-контроль заблокировал запрос. Попытка перезапросить фейковый kid='{}' спустя всего {:?}. Минимальный интервал: {:?}", 
+                    "Flood control denied request. kid='{}' after {:?}. Min interval: {:?}", 
                     token_kid, elapsed, state.config.jwks_min_refresh_interval
                 );
                 return Err(StatusCode::UNAUTHORIZED);
             }
         }
 
-        tracing::info!("⚠️ Ключ с kid='{}' не найден в кэше. Обновляю JWKS...", token_kid);
+        tracing::info!("Key with kid='{}' not found in cache. Updating JWKS...", token_kid);
         let fresh_jwks = fetch_jwks(&state.config.jwks_url).await?;
         
         let mut jwks_guard = state.jwks.write().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
@@ -148,11 +146,11 @@ async fn protected_handler(
         jwks_guard.last_updated = Instant::now();
         
         found_jwk = jwks_guard.data.keys.iter().find(|jwk| jwk.kid == token_kid).cloned();
-        tracing::info!("🔄 Кэш ключей успешно обновлен.");
+        tracing::info!("JWKS updated");
     }
 
     let target_jwk = found_jwk.ok_or_else(|| {
-        tracing::warn!("Отклонено: Ключ с kid='{}' отсутствует на сервере Keycloak даже после обновления.", token_kid);
+        tracing::warn!("Denied: Key with kid='{}' not found on Keycloak even after update", token_kid);
         StatusCode::UNAUTHORIZED
     })?;
 
@@ -166,14 +164,14 @@ async fn protected_handler(
 
     let token_data = decode::<Claims>(token, &decoding_key, &validation)
         .map_err(|e| {
-            tracing::error!("❌ Криптографическая ошибка или просроченный токен: {:?}", e);
+            tracing::error!("Crypto error or old token: {:?}", e);
             StatusCode::UNAUTHORIZED
         })?;
 
-    tracing::info!("🔒 Доступ разрешен для пользователя: {}", token_data.claims.preferred_username);
+    tracing::info!("Access granted for: {}", token_data.claims.preferred_username);
     
     Ok(format!(
-        "🔒 Доступ разрешен! Привет, {}",
+        "Access granted! Hello, {}",
         token_data.claims.preferred_username
     ))
 }
