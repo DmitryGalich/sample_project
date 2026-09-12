@@ -9,13 +9,19 @@ use serde::{Deserialize, Serialize};
 use std::sync::{Arc, RwLock};
 use std::time::{Instant, Duration};
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct RealmAccess {
+    pub roles: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Claims {
     pub sub: String,
     pub preferred_username: String,
     pub email: Option<String>,
     pub exp: u64,
     pub iss: String,
+    pub realm_access: Option<RealmAccess>, 
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -80,6 +86,7 @@ pub async fn run_server(host_port: &str, config: ServerConfig) {
 
     let app = Router::new()
         .route("/protected", get(protected_handler))
+        .route("/admin/dashboard", get(admin_handler))
         .with_state(shared_state);
 
     let listener = tokio::net::TcpListener::bind(host_port).await.unwrap();
@@ -171,4 +178,61 @@ async fn protected_handler(
         "Access granted! Hello, {}",
         token_data.claims.preferred_username
     ))
+}
+
+async fn admin_handler(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<String, StatusCode> {
+    // Вся базовая валидация токена (копия из protected_handler)
+    let auth_header = headers
+        .get(AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .ok_or(StatusCode::UNAUTHORIZED)?;
+
+    if !auth_header.starts_with("Bearer ") {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+    let token = &auth_header["Bearer ".len()..];
+
+    let header = decode_header(token).map_err(|_| StatusCode::UNAUTHORIZED)?;
+    let token_kid = header.kid.ok_or(StatusCode::UNAUTHORIZED)?;
+
+    let mut found_jwk = {
+        let jwks_guard = state.jwks.read().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        jwks_guard.data.keys.iter().find(|jwk| jwk.kid == token_kid).cloned()
+    };
+
+    if found_jwk.is_none() {
+        let fresh_jwks = fetch_jwks(&state.config.jwks_url).await?;
+        let mut jwks_guard = state.jwks.write().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        jwks_guard.data = fresh_jwks;
+        jwks_guard.last_updated = Instant::now();
+        found_jwk = jwks_guard.data.keys.iter().find(|jwk| jwk.kid == token_kid).cloned();
+    }
+
+    let target_jwk = found_jwk.ok_or(StatusCode::UNAUTHORIZED)?;
+    let decoding_key = DecodingKey::from_rsa_components(&target_jwk.n, &target_jwk.e)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let mut validation = Validation::new(Algorithm::RS256);
+    validation.set_issuer(&state.config.allowed_issuers);
+    validation.set_audience(&state.config.allowed_audiences); 
+
+    let token_data = decode::<Claims>(token, &decoding_key, &validation)
+        .map_err(|_| StatusCode::UNAUTHORIZED)?;
+
+    // === ПРОВЕРКА РОЛИ АДМИНИСТРАТОРА ===
+    let has_admin_role = token_data.claims.realm_access
+        .map(|access| access.roles.contains(&"admin".to_string()))
+        .unwrap_or(false);
+
+    if !has_admin_role {
+        tracing::warn!("⛔ Отклонено: Пользователь {} пытался зайти в админку без роли 'admin'", token_data.claims.preferred_username);
+        // Возвращаем статус 403 Forbidden — токен валидный, но прав на этот ресурс нет
+        return Err(StatusCode::FORBIDDEN); 
+    }
+
+    tracing::info!("👑 Доступ в админку разрешен для: {}", token_data.claims.preferred_username);
+    Ok(format!("👑 Добро пожаловать в секретную админку, О Великий Администратор {}!", token_data.claims.preferred_username))
 }

@@ -3320,3 +3320,220 @@ impl ServerConfig {
 * 👑 Настроим роли доступа (Admin / User), чтобы заблокировать часть эндпоинтов?
 
 
+////////////////
+
+авторизация через гугл тут осуществима?
+
+////////////////
+
+Да, абсолютно осуществима, причем это делается невероятно красиво.
+Вам не придется менять ни одной строчки кода в вашем бэкенде на Rust! Бэкенд по-прежнему будет просто принимать токен, проверять RSA-подпись, Issuer и Audience [^2].
+В этом и заключается главная суперсила архитектуры с Identity Provider (Keycloak): вся логика интеграции со сторонними гигантами (Google, GitHub, Apple, VK) инкапсулируется внутри Keycloak. Для вашего Rust-приложения вход через пароль Ивана и вход Ивана через Google будут выглядеть абсолютно одинаково — на выходе Rust получит точно такой же криптографически подписанный JWT-токен [^2].
+------------------------------
+## Архитектурная схема (Как это работает)
+
+   1. На странице логина Keycloak у пользователя появляется кнопка «Войти через Google».
+   2. Иван нажимает её → Keycloak редиректит его на сервера Google Auth.
+   3. Иван вводит почту/пароль от Google-аккаунта и разрешает доступ.
+   4. Google возвращает пользователя обратно в ваш Keycloak с кодом авторизации Google.
+   5. Keycloak «за кулисами» обменивает этот код на данные профиля Google, автоматически создает пользователя в своей базе данных (если его там не было) и генерирует для вашего фронтенда стандартный access_token [^2].
+   6. Фронтенд шлет этот токен в Rust, и Rust пускает пользователя [^2].
+
+------------------------------
+## Как это настроить пошагово?
+Полноценная настройка требует создания официального приложения в консоли Google, но мы можем разобрать этот процесс по этапам.
+## Шаг 1: На стороне Google (Google Cloud Console)
+Вам нужно зайти на [Google Cloud Console](https://console.cloud.google.com/) и создать проект:
+
+   1. Перейти в раздел APIs & Services → OAuth consent screen (настроить экран согласия).
+   2. Перейти в Credentials (Учетные данные) → Нажать Create Credentials → OAuth client ID.
+   3. Выбрать тип приложения: Web application.
+   4. В поле Authorized redirect URIs (Разрешенные URI перенаправления) нужно вставить специальный адрес вашего Keycloak:
+   http://localhost/auth/realms/sample_project_realm/broker/google/endpoint (если через Nginx на порту 80) или с портом 8080.
+   5. Нажать Save и скопировать два выданных значения: Client ID и Client Secret (это секреты самого гугла).
+
+## Шаг 2: На стороне Keycloak (Панель администратора)
+
+   1. Зайдите в админку Keycloak (http://localhost:8080) и выберите ваш Realm sample_project_realm.
+   2. В левом меню перейдите в раздел Identity Providers (Поставщики удостоверений).
+   3. Нажмите Add provider и выберите из списка Google.
+   4. В появившейся форме заполните всего два главных поля:
+   * Client ID — вставьте ID, скопированный из Google Console.
+      * Client Secret — вставьте секрет из Google Console.
+   5. Нажмите Save.
+
+------------------------------
+## Как это проверить?
+После этих настроек просто запустите ваш привычный флоу авторизации в браузере (ссылку из Этапа 3). На странице ввода логина и пароля Keycloak под формой автоматически появится большая кнопка Google.
+Если вы нажмете на нее, пройдете аутентификацию в Google, Keycloak создаст пользователя в вашей DB PostgreSQL, выдаст токен, и ваш Rust-бэкенд успешно его примет! [^2]
+------------------------------
+Хотите ли вы:
+
+* Прямо сейчас настроить этот флоу вживую (для этого вам понадобится зайти в свой Google-аккаунт и создать тестовые учетные данные)?
+* Или мы вернемся к нашему бэкенду и займемся подключением PostgreSQL через SQLx, чтобы Rust научился хранить внутренние данные пользователей?
+
+
+////////////////
+
+
+потом
+сейчас
+👑 Настроим роли доступа (Admin / User), чтобы заблокировать часть эндпоинтов?
+
+//////////////
+
+Отличный выбор. Разделение прав пользователей на основе ролей — это классический подход RBAC (Role-Based Access Control).
+Мы сделаем так:
+
+   1. В Keycloak создадим роль admin.
+   2. Назначим её пользователю ivan.
+   3. В коде Rust добавим новый эндпоинт /admin/dashboard.
+   4. Научим Rust парсить роли внутри JWT-токена и возвращать 403 Forbidden, если у пользователя нет роли admin.
+
+------------------------------
+## Шаг 1. Создаем роль и назначаем её Ивану в Keycloak
+Зайдите в админку Keycloak (http://localhost:8080) под администратором:
+
+   1. Создание роли:
+   * В левом меню выберите ваш Realm sample_project_realm.
+      * Перейдите в раздел Realm roles (Роли реалма) и нажмите кнопку Create role.
+      * В поле Role name введите маленькими буквами: admin.
+      * Нажмите Save.
+   2. Назначение роли Ивану:
+   * В левом меню перейдите в Users (Пользователи).
+      * Найдите пользователя ivan и нажмите на его ID.
+      * Перейдите на вкладку Role mapping (Сопоставление ролей).
+      * Нажмите кнопку Assign role (Назначить роль).
+      * Выберите роль admin из списка и нажмите Assign.
+   
+------------------------------
+## Шаг 2. Как роли выглядят внутри JWT? (Теория)
+Когда ivan получит новый токен, Keycloak автоматически добавит блок ролей в Payload токена. В вашей структуре токена (которую мы декодировали на Этапе 4) этот блок выглядит так:
+
+"realm_access": {
+  "roles": [
+    "default-roles-sample_project_realm",
+    "offline_access",
+    "uma_authorization",
+    "admin"  <-- НАША НОВАЯ РОЛЬ ПОЯВИТСЯ ТУТ
+  ]
+}
+
+Чтобы Rust смог прочитать этот блок, нам нужно описать соответствующие вложенные структуры данных для десериализации JSON.
+------------------------------
+## Шаг 3. Обновляем структуру Claims в backend/src/server.rs
+Откройте файл backend/src/server.rs и найдите в самом верху структуру Claims. Давайте добавим туда поле realm_access.
+Замените старое определение структуры Claims и добавьте вспомогательную структуру RealmAccess:
+
+#[derive(Debug, Serialize, Deserialize, Clone)]pub struct RealmAccess {
+    pub roles: Vec<String>,
+}
+// Обновленный Payload (Claims) токена
+#[derive(Debug, Serialize, Deserialize, Clone)]pub struct Claims {
+    pub sub: String,
+    pub preferred_username: String,
+    pub email: Option<String>,
+    pub exp: u64,
+    pub iss: String,
+    pub realm_access: Option<RealmAccess>, // <-- ДОБАВИЛИ ЭТУ СТРОКУ
+}
+
+------------------------------
+## Шаг 4. Добавляем админский эндпоинт и проверку роли в backend/src/server.rs
+Теперь добавим в server.rs два изменения:
+
+   1. Маршрут /admin/dashboard в функции run_server.
+   2. Новый обработчик admin_handler, который проверяет наличие роли admin.
+
+Внутри файла backend/src/server.rs обновите функцию run_server:
+
+pub async fn run_server(host_port: &str, config: ServerConfig) {
+    // ... логирование загрузки JWKS без изменений ...
+
+    // Добавляем новый роут /admin/dashboard
+    let app = Router::new()
+        .route("/protected", get(protected_handler))
+        .route("/admin/dashboard", get(admin_handler)) // <-- НОВЫЙ МАРШРУТ
+        .with_state(shared_state);
+
+    let listener = tokio::net::TcpListener::bind(host_port).await.unwrap();
+    tracing::info!("🚀 Боевой Rust-бэкенд успешно запущен на {}", host_port);
+    axum::serve(listener, app).await.unwrap();
+}
+
+И добавьте в самый конец файла backend/src/server.rs функцию обработчика admin_handler:
+
+async fn admin_handler(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<String, StatusCode> {
+    // Вся базовая валидация токена (копия из protected_handler)
+    let auth_header = headers
+        .get(AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .ok_or(StatusCode::UNAUTHORIZED)?;
+
+    if !auth_header.starts_with("Bearer ") {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+    let token = &auth_header["Bearer ".len()..];
+
+    let header = decode_header(token).map_err(|_| StatusCode::UNAUTHORIZED)?;
+    let token_kid = header.kid.ok_or(StatusCode::UNAUTHORIZED)?;
+
+    let mut found_jwk = {
+        let jwks_guard = state.jwks.read().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        jwks_guard.data.keys.iter().find(|jwk| jwk.kid == token_kid).cloned()
+    };
+
+    if found_jwk.is_none() {
+        let fresh_jwks = fetch_jwks(&state.config.jwks_url).await?;
+        let mut jwks_guard = state.jwks.write().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        jwks_guard.data = fresh_jwks;
+        jwks_guard.last_updated = Instant::now();
+        found_jwk = jwks_guard.data.keys.iter().find(|jwk| jwk.kid == token_kid).cloned();
+    }
+
+    let target_jwk = found_jwk.ok_or(StatusCode::UNAUTHORIZED)?;
+    let decoding_key = DecodingKey::from_rsa_components(&target_jwk.n, &target_jwk.e)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let mut validation = Validation::new(Algorithm::RS256);
+    validation.set_issuer(&state.config.allowed_issuers);
+    validation.set_audience(&state.config.allowed_audiences); 
+
+    let token_data = decode::<Claims>(token, &decoding_key, &validation)
+        .map_err(|_| StatusCode::UNAUTHORIZED)?;
+
+    // === ПРОВЕРКА РОЛИ АДМИНИСТРАТОРА ===
+    let has_admin_role = token_data.claims.realm_access
+        .map(|access| access.roles.contains(&"admin".to_string()))
+        .unwrap_or(false);
+
+    if !has_admin_role {
+        tracing::warn!("⛔ Отклонено: Пользователь {} пытался зайти в админку без роли 'admin'", token_data.claims.preferred_username);
+        // Возвращаем статус 403 Forbidden — токен валидный, но прав на этот ресурс нет
+        return Err(StatusCode::FORBIDDEN); 
+    }
+
+    tracing::info!("👑 Доступ в админку разрешен для: {}", token_data.claims.preferred_username);
+    Ok(format!("👑 Добро пожаловать в секретную админку, О Великий Администратор {}!", token_data.claims.preferred_username))
+}
+
+------------------------------
+## Время теста 🧪
+
+   1. Запросите новый токен Ивана через скрипт ./get_token.sh (так как роль мы добавили только что, старый токен про неё ничего не знает).
+   2. Откройте Postman и отправьте GET запрос на новый адрес:
+   http://localhost/admin/dashboard (или через Nginx)
+   3. Добавьте ваш свежий токен в заголовок Authorization: Bearer <токен>.
+   4. Вы должны получить статус 200 OK и текст: "👑 Добро пожаловать в секретную админку...".
+
+## Проверка на защиту:
+Зайдите обратно в Keycloak, заберите роль admin у Ивана (уберите её в Role mapping), подождите 10 секунд, сгенерируйте скриптом новый токен и отправьте тот же запрос в Postman.
+
+* Что вернул сервер?
+* Появился ли статус 403 Forbidden?
+
+Попробуйте провести этот эксперимент! Удалось ли Ивану легитимно стать администратором и зайти в защищенную панель?
+
