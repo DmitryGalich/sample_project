@@ -4,10 +4,9 @@
 KEYCLOAK_URL="http://localhost/auth/realms/sample_project_realm/protocol/openid-connect/token"
 CLIENT_ID="frontend"
 USERNAME="ivan"
+PASSWORD="ivan_password"
 
-# Запрашиваем пароль в терминале (скрывая ввод, как при sudo)
-read -sp "Введите пароль для пользователя '$USERNAME': " PASSWORD
-echo ""
+
 
 echo "⏳ Запрос токена у Keycloak через Nginx..."
 
