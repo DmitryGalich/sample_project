@@ -13,6 +13,7 @@ struct Claims {
     preferred_username: String,
     email: Option<String>,
     exp: u64,
+    iss: String, 
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -116,7 +117,17 @@ async fn protected_handler(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let mut validation = Validation::new(Algorithm::RS256);
-    validation.validate_aud = false; 
+    validation.set_audience(&["frontend", "account"]); // Указываем, какие client_id имеют право обращаться к бэкенду
+    validation.set_issuer(&["http://localhost/realms/sample_project_realm"]);
+    
+
+    // Печатаем ТОЧНЫЙ issuer, который прилетел в токене
+    // validation.set_issuer(&[
+    //     "http://localhost:8080/realms/sample_project_realm",
+    //     "http://localhost/auth/realms/sample_project_realm",
+    //     "http://keycloak:8080/realms/sample_project_realm"
+    // ]);
+
 
     let token_data = decode::<Claims>(token, &decoding_key, &validation)
         .map_err(|e| {
