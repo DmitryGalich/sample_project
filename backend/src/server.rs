@@ -30,7 +30,6 @@ struct Jwks {
     keys: Vec<Jwk>,
 }
 
-// Конфигурация сервера
 pub struct ServerConfig {
     pub jwks_url: String,
     pub allowed_issuers: Vec<String>,
@@ -128,7 +127,6 @@ async fn protected_handler(
             let jwks_guard = state.jwks.read().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
             let elapsed = jwks_guard.last_updated.elapsed();
             
-            // Используем динамический интервал времени из конфигурации!
             if elapsed < state.config.jwks_min_refresh_interval {
                 tracing::warn!(
                     "Flood control denied request. kid='{}' after {:?}. Min interval: {:?}", 
@@ -154,7 +152,6 @@ async fn protected_handler(
         StatusCode::UNAUTHORIZED
     })?;
 
-    // Шаг D: Валидация подписи
     let decoding_key = DecodingKey::from_rsa_components(&target_jwk.n, &target_jwk.e)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
