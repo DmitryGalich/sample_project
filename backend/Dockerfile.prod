@@ -1,0 +1,47 @@
+# ==============================================================================
+# ЭТАП 1: Сборка и компиляция (Builder)
+# ==============================================================================
+FROM rust:1.88-bookworm AS builder
+
+RUN apt-get update && apt-get install -y \
+    pkg-config \
+    libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Создаем проект-пустышку
+RUN cargo new --bin backend
+COPY ./Cargo.toml /app/backend/Cargo.toml
+
+WORKDIR /app/backend
+# Предварительная сборка зависимостей
+RUN cargo build --release
+RUN rm -f src/*.rs target/release/deps/*
+
+# Копируем реальный исходный код
+COPY ./src ./src
+
+# ФИКС ТУТ: Принудительно заставляем компилятор назвать бинарник "backend"
+RUN cargo build --release --bin rust-backend
+
+# ==============================================================================
+# ЭТАП 2: Минимальный продакшен-образ (Runner)
+# ==============================================================================
+FROM debian:bookworm-slim AS runner
+
+RUN apt-get update && apt-get install -y \
+    ca-certificates \
+    libssl3 \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Теперь этот файл гарантированно называется "backend" и лежит именно здесь
+COPY --from=builder /app/backend/target/release/rust-backend /app/rust-backend
+
+ENV RUST_LOG=backend=info,axum=warn
+
+EXPOSE 8000
+
+CMD ["/app/rust-backend"]

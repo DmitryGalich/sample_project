@@ -136,9 +136,31 @@ async fn auth_middleware(
 
 pub async fn run_server(host_port: &str, config: ServerConfig) {
     tracing::info!("Initial loading keys from Keycloak...");
-    let initial_jwks = fetch_jwks(&config.jwks_url)
-        .await
-        .expect("Keycloak is not available");
+    let mut initial_jwks = None;
+    let mut attempts = 0;
+    let max_attempts = 15; // Сделаем 15 попыток
+
+    while attempts < max_attempts {
+        match fetch_jwks(&config.jwks_url).await {
+            Ok(jwks) => {
+                initial_jwks = Some(jwks);
+                break;
+            }
+            Err(_) => {
+                attempts += 1;
+                tracing::warn!(
+                    "⚠️ Keycloak еще не готов (Попытка {}/{}). Ждем 3 секунды...", 
+                    attempts, max_attempts
+                );
+                tokio::time::sleep(Duration::from_secs(3)).await;
+            }
+        }
+    }
+
+    // Если после всех попыток Keycloak так и не ответил — только тогда паникуем
+    let initial_jwks = initial_jwks.expect("❌ Критическая ошибка: Не удалось подключиться к Keycloak после серии попыток.");
+    tracing::info!("✅ Успешно загружено ключей: {}", initial_jwks.keys.len());
+
     
     let shared_state = Arc::new(AppState {
         config,
