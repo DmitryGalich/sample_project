@@ -60,7 +60,9 @@ services:
   backend:
     build:
       context: ./backend
-      dockerfile: Dockerfile.prod
+      # dockerfile: Dockerfile.prod
+      dockerfile: Dockerfile.dev
+
     container_name: backend
     restart: unless-stopped
     env_file:

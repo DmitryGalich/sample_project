@@ -40,9 +40,11 @@ struct Jwks {
 
 pub struct ServerConfig {
     pub jwks_url: String,
-    pub allowed_issuers: Vec<String>,
+    pub allowed_realms: Vec<String>,
     pub allowed_audiences: Vec<String>,
     pub jwks_min_refresh_interval: Duration,
+    pub jwks_init_max_attempts: u64,
+    pub jwks_init_attempts_interval_sec: Duration,
 }
 
 struct CachedJwks {
@@ -119,7 +121,7 @@ async fn auth_middleware(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let mut validation = Validation::new(Algorithm::RS256);
-    validation.set_issuer(&state.config.allowed_issuers);
+    validation.set_issuer(&state.config.allowed_realms);
     validation.set_audience(&state.config.allowed_audiences); 
 
     // 5. Криптографическая проверка подписи
@@ -137,22 +139,22 @@ async fn auth_middleware(
 pub async fn run_server(host_port: &str, config: ServerConfig) {
     tracing::info!("Initial loading keys from Keycloak...");
     let mut initial_jwks = None;
-    let mut attempts = 0;
-    let max_attempts = 15; // Сделаем 15 попыток
+    let mut attempt_i = 0;
+    let max_attempts = config.jwks_init_max_attempts;
 
-    while attempts < max_attempts {
+    while attempt_i < max_attempts {
         match fetch_jwks(&config.jwks_url).await {
             Ok(jwks) => {
                 initial_jwks = Some(jwks);
                 break;
             }
             Err(_) => {
-                attempts += 1;
+                attempt_i += 1;
                 tracing::warn!(
                     "⚠️ Keycloak еще не готов (Попытка {}/{}). Ждем 3 секунды...", 
-                    attempts, max_attempts
+                    attempt_i, max_attempts
                 );
-                tokio::time::sleep(Duration::from_secs(3)).await;
+                tokio::time::sleep(config.jwks_init_attempts_interval_sec).await;
             }
         }
     }
